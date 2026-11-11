@@ -21,6 +21,7 @@ from .segment import data_bar_row, overlay_top, pixel_size_info, sem_metadata, s
 from .features import particle_table
 from .frame import counted_area, frame_box
 from .classifier import load_card, network_evidence, probabilities
+from .shape_classes import SHAPE_RGB, SHAPE_NAMES, BAND, shape_stats, number_stats
 from . import qc
 from .resources import DEFAULT_UNET
 
@@ -32,10 +33,6 @@ CAULI_RGB = (217, 119, 31)
 CAULI_SOFT_RGB = (243, 186, 125)      # borderline, called cauliflower
 DENSE_SOFT_RGB = (140, 190, 220)      # borderline, called dense
 FRAME_RGB = (255, 215, 0)
-SHAPE_RGB = [(76, 120, 168), (114, 183, 178), (238, 202, 59), (178, 121, 162), (228, 87, 86)]
-SHAPE_NAMES = ["C1 compact", "C2 elongated smooth", "C3 blocky rough", "C4 elongated concave",
-               "C5 branched / agglomerate"]
-BAND = (30.0, 100.0)
 
 
 @dataclass
@@ -53,9 +50,12 @@ class Settings:
         return d
 
 
-def list_images(folder):
+MORPH_EXT = IMAGE_EXT + (".pdf", ".xls")      # the morphology tab also reads Microtrac exports
+
+
+def list_images(folder, ext=IMAGE_EXT):
     return sorted(os.path.join(folder, f) for f in os.listdir(folder)
-                  if f.lower().endswith(IMAGE_EXT) and not f.startswith("."))
+                  if f.lower().endswith(ext) and not f.startswith(".") and not f.startswith("~$"))
 
 
 def sample_of(name):
@@ -251,6 +251,15 @@ def classify_image(path, s: Settings, progress=None):
 
 # ---------------------------------------------------------------- morphology
 
+def morphology_input(path, s: Settings, progress=None):
+    """Morphology profile of one file: an SEM image, or a Microtrac export (particle report as PDF or page
+    picture, particle table .xls, size report PDF). See microtrac.py for what each one gives."""
+    from . import microtrac
+    step = progress or (lambda f, msg="": None)
+    r = microtrac.analyse(path, s.as_dict(), step)
+    return r if r is not None else morphology_image(path, s, progress)
+
+
 def morphology_image(path, s: Settings, progress=None):
     """C1-C5 shape classes for every counted particle of one SEM image."""
     from .shape_classes import ShapeClasses, FEAT, sem_descriptors
@@ -289,29 +298,9 @@ def morphology_image(path, s: Settings, progress=None):
     stats.update({k: round(v, 3) for k, v in fm.items()})
     warnings = qc.settings_check(p.get("meta", {}), info, card) + qc.field_check(fm, len(rows), card)
     step(1.0, "done")
-    return dict(kind="morphology", name=p["name"], path=path, sample=sample_of(p["name"]),
+    return dict(kind="morphology", source="sem", name=p["name"], path=path, sample=sample_of(p["name"]),
                 original=np.stack([gray] * 3, -1), analysed=analysed, rows=rows, stats=stats, warnings=warnings,
                 image_info=info, settings=dict(s.as_dict(), frame_rule=rule), version=__version__)
-
-
-def shape_stats(rows):
-    rows = [r for r in rows if r.get("shape_class", 0) > 0]
-    out = {"n_counted": len(rows)}
-    if not rows:
-        return out
-    da = np.array([r["Da"] for r in rows])
-    vol = np.array([r["Volume"] for r in rows])
-    cls = np.array([r["shape_class"] for r in rows])
-    band = (da >= BAND[0]) & (da < BAND[1])
-    for k in range(1, 6):
-        out[f"num_pct_C{k}"] = 100 * float((cls == k).mean())
-        out[f"vol_pct_C{k}"] = 100 * float(vol[cls == k].sum() / vol.sum())
-        out[f"band_vol_pct_C{k}"] = 100 * float(vol[band & (cls == k)].sum() / vol[band].sum()) if band.any() else float("nan")
-    out["n_band"] = int(band.sum())
-    out["D50_num_um"] = float(np.median(da))
-    for k in ("Circularity", "Solidity", "Convexity", "W/L Aspect Ratio", "Extent"):
-        out[f"median_{k}"] = float(np.median([r[k] for r in rows]))
-    return out
 
 
 # ------------------------------------------------------------------ batches
@@ -344,13 +333,23 @@ def summarise_classification(results):
 
 
 def summarise_morphology(results):
-    """Per sample: C1-C5 shares from all its fields' particles pooled."""
+    """Per sample and source: C1-C5 shares from all its files' particles pooled.
+
+    SEM fields and Microtrac tables carry sizes, so they give shares by number, by volume and in the band.
+    Microtrac report silhouettes carry none and give shares by number. Size reports have no particles and
+    are returned with their percentiles only.
+    """
     by = {}
     for r in results:
-        by.setdefault(r["sample"], []).append(r)
+        by.setdefault((r["sample"], r.get("source", "sem")), []).append(r)
     out = []
-    for s, rs in by.items():
+    for (s, src), rs in by.items():
         rows = [p for r in rs for p in r["rows"]]
-        st = shape_stats(rows)
-        out.append(dict(sample=s, fields=len(rs), **st))
+        if src == "size":
+            st = {k: v for k, v in rs[-1]["stats"].items()}
+        elif src == "gallery":
+            st = number_stats(rows)
+        else:
+            st = shape_stats(rows)
+        out.append(dict(sample=s, source=src, fields=len(rs), pages=sum(r.get("pages", 1) for r in rs), **st))
     return out

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, Q
                                QHeaderView, QButtonGroup, QMessageBox, QToolButton, QMenu, QScrollArea,
                                QFrame, QSizePolicy, QAbstractItemView)
 
-from cauliquant.analysis import (Settings, list_images, IMAGE_EXT, CAULI_RGB, DENSE_RGB, CAULI_SOFT_RGB,
+from cauliquant.analysis import (Settings, list_images, IMAGE_EXT, MORPH_EXT, CAULI_RGB, DENSE_RGB, CAULI_SOFT_RGB,
                                  DENSE_SOFT_RGB, SHAPE_RGB,
                                  SHAPE_NAMES, FRAME_RGB, summarise_classification, summarise_morphology)
 from cauliquant.segment import data_bar_row
@@ -132,7 +132,7 @@ class AnalysisTab(QWidget):
         root.setSpacing(8)
 
         bar = QHBoxLayout()
-        self.btn_image = QPushButton("Open image…")
+        self.btn_image = QPushButton("Open image…" if self.kind == "classification" else "Open files…")
         self.btn_folder = QPushButton("Open folder…")
         self.btn_run = QPushButton("Analyse")
         self.btn_run.setObjectName("primary")
@@ -175,7 +175,7 @@ class AnalysisTab(QWidget):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        cap = QLabel("Images")
+        cap = QLabel("Images" if self.kind == "classification" else "Files")
         cap.setObjectName("section")
         ll.addWidget(cap)
         self.list = QListWidget()
@@ -209,6 +209,9 @@ class AnalysisTab(QWidget):
         top.addWidget(fit)
         ml.addLayout(top)
         self.viewer = ImageViewer()
+        if self.kind == "morphology":
+            self.viewer.set_placeholder("Open SEM images, or Microtrac exports:\nparticle report (PDF or page pictures), "
+                                        "particle table (.xls), size report (PDF)")
         ml.addWidget(self.viewer, 1)
         if self.kind == "classification":
             ml.addWidget(legend([(CAULI_RGB, "Cauliflower"), (CAULI_SOFT_RGB, "Borderline, cauliflower"),
@@ -335,12 +338,16 @@ class AnalysisTab(QWidget):
         if self.kind == "classification":
             self.batch = make_table(["Sample", "Fields", "Cauli. area %", "95 % interval", "Field SD"])
         else:
-            self.batch = make_table(["Sample", "Fields", "Particles", "C5 vol %", "C5 vol % 30–100"])
+            self.batch = make_table(["Sample", "Files", "Particles", "C5 num %", "C5 vol %", "C5 vol % 30–100"])
         L.addWidget(self.batch)
-        self.batch_note = QLabel("Samples are grouped by the part of the file name before “_x” "
-                                 "(e.g. 384_x100_0031 → 384). Each sample pools all particles of its fields."
-                                 + (" The 95 % interval shows how far the pooled value could move with other fields "
-                                    "of the same stub; it needs at least 3 fields." if self.kind == "classification" else ""))
+        self.batch_note_text = ("Samples are grouped by the part of the file name before “_x” "
+                                "(e.g. 384_x100_0031 → 384). Each sample pools all particles of its fields."
+                                + (" The 95 % interval shows how far the pooled value could move with other fields "
+                                   "of the same stub; it needs at least 3 fields." if self.kind == "classification" else
+                                   " Microtrac (MT) files are grouped by their batch folder and kind. Report "
+                                   "silhouettes carry no sizes, so they give a share by number only; opening the PDF "
+                                   "and pictures of the same report counts its particles twice."))
+        self.batch_note = QLabel(self.batch_note_text)
         self.batch_note.setObjectName("muted")
         self.batch_note.setWordWrap(True)
         L.addWidget(self.batch_note)
@@ -362,19 +369,28 @@ class AnalysisTab(QWidget):
     def open_image(self):
         start = self.qs.value("last_dir", os.path.expanduser("~"))
         pats = " ".join("*" + e for e in IMAGE_EXT)
-        f, _ = QFileDialog.getOpenFileName(self, "Open SEM image", start, f"Images ({pats});;All files (*)")
-        if f:
-            self.qs.setValue("last_dir", os.path.dirname(f))
-            self.load([f])
+        if self.kind == "classification":
+            title, filt = "Open SEM images", f"Images ({pats});;All files (*)"
+        else:
+            title = "Open SEM images or Microtrac files"
+            filt = (f"SEM images and Microtrac files ({pats} *.pdf *.xls);;Images ({pats});;"
+                    "Microtrac reports (*.pdf);;Microtrac particle tables (*.xls);;All files (*)")
+        files, _ = QFileDialog.getOpenFileNames(self, title, start, filt)
+        if files:
+            self.qs.setValue("last_dir", os.path.dirname(files[0]))
+            self.load(sorted(files))
 
     def open_folder(self):
         start = self.qs.value("last_dir", os.path.expanduser("~"))
-        d = QFileDialog.getExistingDirectory(self, "Open a folder of SEM images", start)
+        morph = self.kind == "morphology"
+        d = QFileDialog.getExistingDirectory(self, "Open a folder of SEM images" + (" or Microtrac files" if morph else ""),
+                                             start)
         if d:
             self.qs.setValue("last_dir", d)
-            files = list_images(d)
+            files = list_images(d, MORPH_EXT if morph else IMAGE_EXT)
             if not files:
-                QMessageBox.information(self, "No images", "That folder has no .tif, .png or .jpg images.")
+                QMessageBox.information(self, "Nothing to open", "That folder has no .tif, .png or .jpg images"
+                                        + (", and no .pdf or .xls Microtrac files." if morph else "."))
                 return
             self.load(files)
 
@@ -421,7 +437,7 @@ class AnalysisTab(QWidget):
     def _on_progress(self, idx, frac, msg):
         n = len(self.paths)
         self.progress.setValue(int(1000 * (idx + frac) / n))
-        self.progress.setFormat(f"Image {idx + 1} of {n}: {msg}")
+        self.progress.setFormat(f"{'Image' if self.kind == 'classification' else 'File'} {idx + 1} of {n}: {msg}")
 
     def _on_result(self, idx, r):
         self.results[idx] = r
@@ -445,7 +461,8 @@ class AnalysisTab(QWidget):
         self.progress.setVisible(False)
         self.btn_cancel.setVisible(False)
         done = len(self.results)
-        msg = f"{done} of {len(self.paths)} image{'s' if len(self.paths) > 1 else ''} analysed"
+        what = "image" if self.kind == "classification" else "file"
+        msg = f"{done} of {len(self.paths)} {what}{'s' if len(self.paths) > 1 else ''} analysed"
         if self.errors:
             msg += f", {len(self.errors)} failed (see the red entries)"
         self.status.setText(msg)
@@ -456,9 +473,17 @@ class AnalysisTab(QWidget):
         name = os.path.splitext(os.path.basename(self.paths[i]))[0]
         if i in self.results:
             st = self.results[i]["stats"]
-            v = st.get("cauliflower_area_pct") if self.kind == "classification" else st.get("vol_pct_C5")
+            src = self.results[i].get("source", "sem")
             flag = "  ⚠" if self.results[i].get("warnings") else ""
-            it.setText(f"{name}{flag}\n   {fmt(v, 1, ' %')} {'cauliflower' if self.kind == 'classification' else 'C5 by volume'}")
+            if self.kind == "classification":
+                line = f"{fmt(st.get('cauliflower_area_pct'), 1, ' %')} cauliflower"
+            elif src == "size":
+                line = f"size report, D50 {fmt(st.get('LD_D50'), 0, ' µm')}"
+            elif src == "gallery":
+                line = f"{fmt(st.get('num_pct_C5'), 1, ' %')} C5 by number"
+            else:
+                line = f"{fmt(st.get('vol_pct_C5'), 1, ' %')} C5 by volume"
+            it.setText(f"{name}{flag}\n   {line}")
             it.setForeground(QColor("#1F2328"))
             it.setToolTip(self.paths[i] + ("\n" + "\n".join(self.results[i]["warnings"]) if flag else ""))
         elif i in self.errors:
@@ -500,6 +525,9 @@ class AnalysisTab(QWidget):
         self.b_anal.setEnabled(r is not None)
         if r is None:
             self.b_orig.setChecked(True)
+            if not self.paths[idx].lower().endswith(IMAGE_EXT):
+                self.viewer.set_placeholder("Failed to read this file" if idx in self.errors else "Reading the file…")
+                return
             try:
                 a = np.array(Image.open(self.paths[idx]).convert("L"))
                 self.viewer.set_image(a[: data_bar_row(a)], keep_view=True)
@@ -522,7 +550,8 @@ class AnalysisTab(QWidget):
             return
         st, info = r["stats"], r["image_info"]
         w = r.get("warnings") or []
-        self.warn.setText("<b>Check this image</b><br>" + "<br>".join("• " + x for x in w))
+        what = "image" if r.get("source", "sem") == "sem" else "file"
+        self.warn.setText(f"<b>Check this {what}</b><br>" + "<br>".join("• " + x for x in w))
         self.warn.setVisible(bool(w))
         if self.kind == "classification":
             self.big.setText(fmt(st["cauliflower_area_pct"], 1, " %"))
@@ -551,18 +580,12 @@ class AnalysisTab(QWidget):
                 ["Large-particle area in touching clusters", fmt(st.get("touching_area_pct"), 0, " %")],
             ])
         else:
-            c5 = st.get("vol_pct_C5", float("nan"))
-            self.big.setText(fmt(c5, 1, " %"))
-            self.big_caption.setText("of particle volume in C5 (branched / agglomerate)")
-            self.bars.set_items([(SHAPE_NAMES[k], st.get(f"vol_pct_C{k + 1}", float("nan")), SHAPE_RGB[k]) for k in range(5)])
-            fill_table(self.tbl, [[["C1 compact", "C2 elongated", "C3 blocky", "C4 concave", "C5 branched"][k - 1], fmt(st.get(f"num_pct_C{k}")), fmt(st.get(f"vol_pct_C{k}")),
-                                   fmt(st.get(f"band_vol_pct_C{k}"))] for k in range(1, 6)] +
-                       [["Particles", st.get("n_counted", 0), "", f"{st.get('n_band', 0)} in band"]])
-            fill_table(self.tbl2, [["D50 by number", fmt(st.get("D50_num_um"), 1, " µm")]] +
-                       [[k, fmt(st.get(f"median_{k}"), 3)] for k in ("Circularity", "Solidity", "Convexity",
-                                                                      "W/L Aspect Ratio", "Extent")])
-            self.tbl2.setVisible(True)
+            self._show_morphology(r)
+            return
         self.tbl.setVisible(True)
+        self.info.setText(self._image_text(info))
+
+    def _image_text(self, info):
         txt = f"{info['native_size'][0]} × {info['native_size'][1]} px"
         if info.get("magnification"):
             txt += f", x{info['magnification']}"
@@ -574,7 +597,51 @@ class AnalysisTab(QWidget):
             txt = ("<span style='color:#B54708'><b>No pixel size in this image's metadata:</b> the default "
                    "0.496 µm/px was used. If that is wrong, untick “Pixel size from SEM metadata”, enter the "
                    "right value and press Analyse.</span><br>" + txt)
-        self.info.setText(txt)
+        return txt
+
+    def _show_morphology(self, r):
+        st, src = r["stats"], r.get("source", "sem")
+        names = ["C1 compact", "C2 elongated", "C3 blocky", "C4 concave", "C5 branched"]
+        nan = float("nan")
+        if src == "size":
+            self.big.setText(fmt(st.get("LD_D50"), 0, " µm"))
+            self.big_caption.setText("median particle size by volume (D50), laser diffraction")
+            self.bars.set_items([])
+            self.tbl.setVisible(False)
+            self.tbl2.setHorizontalHeaderLabels(["Size by volume", "Value"])
+            fill_table(self.tbl2, [["D10", fmt(st.get("LD_D10"), 1, " µm")], ["D50", fmt(st.get("LD_D50"), 1, " µm")],
+                                   ["D90", fmt(st.get("LD_D90"), 1, " µm")],
+                                   ["Span, (D90 − D10) / D50", fmt(st.get("LD_span"), 2)],
+                                   ["Mean by volume (MV)", fmt(st.get("LD_MV"), 1, " µm")],
+                                   ["Mean by area (MA)", fmt(st.get("LD_MA"), 1, " µm")],
+                                   ["Mean by number (MN)", fmt(st.get("LD_MN"), 1, " µm")]])
+            self.tbl2.setVisible(True)
+            self.info.setText(r.get("note", ""))
+            return
+        by_number = src == "gallery"
+        dash = lambda v: "–" if by_number else fmt(v)
+        if by_number:
+            self.big.setText(fmt(st.get("num_pct_C5", nan), 1, " %"))
+            self.big_caption.setText(f"of the {st.get('n_counted', 0)} particles shown in the report are C5 "
+                                     "(branched / agglomerate), by number")
+            self.bars.set_items([(SHAPE_NAMES[k], st.get(f"num_pct_C{k + 1}", nan), SHAPE_RGB[k]) for k in range(5)])
+            last = ["Particles", st.get("n_counted", 0), "", ""]
+            med = []
+        else:
+            self.big.setText(fmt(st.get("vol_pct_C5", nan), 1, " %"))
+            self.big_caption.setText("of particle volume in C5 (branched / agglomerate)" +
+                                     (", all sizes, from Microtrac's own descriptors" if src == "table" else ""))
+            self.bars.set_items([(SHAPE_NAMES[k], st.get(f"vol_pct_C{k + 1}", nan), SHAPE_RGB[k]) for k in range(5)])
+            last = ["Particles", st.get("n_counted", 0), "", f"{st.get('n_band', 0)} in band"]
+            med = [["D50 by number", fmt(st.get("D50_num_um"), 1, " µm")]]
+        fill_table(self.tbl, [[names[k - 1], fmt(st.get(f"num_pct_C{k}")), dash(st.get(f"vol_pct_C{k}")),
+                               dash(st.get(f"band_vol_pct_C{k}"))] for k in range(1, 6)] + [last])
+        self.tbl2.setHorizontalHeaderLabels(["Descriptor (median)", "Value"])
+        fill_table(self.tbl2, med + [[k, fmt(st.get(f"median_{k}"), 3)]
+                                     for k in ("Circularity", "Solidity", "Convexity", "W/L Aspect Ratio", "Extent")])
+        self.tbl.setVisible(True)
+        self.tbl2.setVisible(True)
+        self.info.setText(self._image_text(r["image_info"]) if src == "sem" else r.get("note", ""))
 
     def _update_batch(self):
         res = [self.results[i] for i in sorted(self.results)]
@@ -588,8 +655,18 @@ class AnalysisTab(QWidget):
                      f"{fmt(s['ci_low_pct'])} – {fmt(s['ci_high_pct'])}" if s["fields"] >= 3 else "–",
                      fmt(s["field_sd_pct"])] for s in summarise_classification(res)]
         else:
-            rows = [[s["sample"], s["fields"], s.get("n_counted", 0), fmt(s.get("vol_pct_C5")), fmt(s.get("band_vol_pct_C5"))]
-                    for s in summarise_morphology(res)]
+            rows, sizes = [], []
+            for s in summarise_morphology(res):
+                if s["source"] == "size":
+                    sizes.append(f"{s['sample'].split(' · ')[0]}: D10 {fmt(s.get('LD_D10'), 0)}, "
+                                 f"D50 {fmt(s.get('LD_D50'), 0)}, D90 {fmt(s.get('LD_D90'), 0)} µm")
+                    continue
+                vol = (lambda v: "–") if s["source"] == "gallery" else fmt
+                rows.append([s["sample"], s["fields"], s.get("n_counted", 0), fmt(s.get("num_pct_C5")),
+                             vol(s.get("vol_pct_C5")), vol(s.get("band_vol_pct_C5"))])
+            self.batch.setVisible(bool(rows))
+            self.batch_note.setText(self.batch_note_text + ("<br><b>Size reports (laser diffraction, by volume):</b> "
+                                                            + "; ".join(sizes) + "." if sizes else ""))
         fill_table(self.batch, rows)
 
     # ---------------------------------------------------------------- export

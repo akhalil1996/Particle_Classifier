@@ -86,7 +86,9 @@ class HomeTab(QScrollArea):
         grid.addWidget(card("Morphology profiling",
                             "Measures circularity, solidity, convexity, aspect ratio and extent on each SEM particle "
                             "outline and assigns it to one of five shape classes, <b>C1 compact</b> to "
-                            "<b>C5 branched / agglomerate</b>, with the k-means model fitted on Microtrac SYNC data."),
+                            "<b>C5 branched / agglomerate</b>, with the k-means model fitted on Microtrac SYNC data. "
+                            "Also reads Microtrac exports: the particle report (PDF or page pictures), the particle "
+                            "table (.xls) and the laser diffraction size report (PDF)."),
                        0, 1)
         grid.addWidget(card("Single image or whole folder",
                             "Open one micrograph, or a folder of fields for batch processing. Fields are grouped "
@@ -113,7 +115,8 @@ class HomeTab(QScrollArea):
                    "the Hitachi SU3500 metadata (the .txt file saved next to each image, or the TIFF header). "
                    "For other images, untick <i>Pixel size from SEM metadata</i> and enter it. Images at another "
                    "pixel size are resampled to 0.5 µm/px before analysis. The data bar at the bottom is detected "
-                   "and left out. Accepted formats: TIFF, PNG, JPEG, BMP.")
+                   "and left out. Accepted formats: TIFF, PNG, JPEG, BMP. The morphology tab also takes Microtrac "
+                   "PDF reports, pictures of report pages and .xls particle tables.")
         row = QHBoxLayout()
         row.setSpacing(12)
         row.addWidget(how, 1)
@@ -192,7 +195,7 @@ class MainWindow(QMainWindow):
         m = self.menuBar().addMenu("&File")
         for text, fn in (("Open image for classification…", lambda: self._go(self.tab_class).open_image()),
                          ("Open folder for classification…", lambda: self._go(self.tab_class).open_folder()),
-                         ("Open image for morphology…", lambda: self._go(self.tab_morph).open_image()),
+                         ("Open files for morphology…", lambda: self._go(self.tab_morph).open_image()),
                          ("Open folder for morphology…", lambda: self._go(self.tab_morph).open_folder())):
             a = QAction(text, self)
             a.triggered.connect(fn)

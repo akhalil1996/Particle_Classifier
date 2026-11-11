@@ -12,7 +12,8 @@ a = Analysis(
     datas=[(os.path.join(ROOT, "models"), "models"), (os.path.join(ROOT, "assets"), "assets")],
     hiddenimports=collect_submodules("skimage.filters") + collect_submodules("skimage.morphology")
     + collect_submodules("skimage.segmentation") + collect_submodules("skimage.measure")
-    + collect_submodules("skimage.transform") + collect_submodules("reportlab.graphics.barcode"),
+    + collect_submodules("skimage.transform") + collect_submodules("reportlab.graphics.barcode")
+    + ["pypdfium2", "pypdfium2_raw"],
     excludes=["torch", "matplotlib", "pandas", "tkinter", "IPython", "jupyter", "pytest",
               "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore", "PySide6.QtQuick",
               "PySide6.QtQml", "PySide6.QtMultimedia", "PySide6.QtPdf", "PySide6.QtCharts"],

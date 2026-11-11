@@ -149,10 +149,61 @@ def _warnings(r):
     w = r.get("warnings") or []
     if not w:
         return []
-    return [Paragraph("<b>Check this image:</b> " + " ".join(w), WARN)]
+    what = "image" if r.get("source", "sem") == "sem" else "file"
+    return [Paragraph(f"<b>Check this {what}:</b> " + " ".join(w), WARN)]
+
+
+def _plain(t):
+    """Text for the built-in PDF fonts, which have no micro sign or thin dashes."""
+    return t.replace("µ", "u").replace("–", "-").replace("−", "-").replace("·", "-")
+
+
+def _microtrac_section(r):
+    """Page for one Microtrac file: particle report (silhouettes), particle table or size report."""
+    st, src = r["stats"], r["source"]
+    out = [Paragraph(_plain(r["name"]), H2),
+           Paragraph(f"Sample <b>{_plain(r['sample'])}</b>", SMALL), Spacer(1, 2 * mm)]
+    if src == "gallery":
+        imgs = Table([[_img(r["original"], 88), _img(r["analysed"], 88)],
+                      [Paragraph("Particles as printed in the report", SMALL),
+                       Paragraph("Coloured by shape class", SMALL)]], colWidths=[90 * mm, 90 * mm])
+        imgs.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+        out += [imgs, _legend([(SHAPE_RGB[k], SHAPE_NAMES[k]) for k in range(5)]), Spacer(1, 2 * mm)]
+        rows = [["Shape class", "% by number"]] + [[SHAPE_NAMES[k - 1], _f(st.get(f"num_pct_C{k}"))] for k in range(1, 6)]
+        rows.append(["Particles classified", str(st.get("n_counted", 0))])
+        out.append(_table(rows, [118 * mm, 52 * mm]))
+        rows = [["Descriptor (median, on the Microtrac scale)", "Value"]]
+        rows += [[k, _f(st.get(f"median_{k}"), 3)] for k in ("Circularity", "Solidity", "Convexity", "W/L Aspect Ratio", "Extent")]
+    elif src == "table":
+        out += [_img(r["analysed"], 175), Spacer(1, 2 * mm)]
+        rows = [["Shape class", "% by number", "% by volume", "% by volume, 30-100 um"]]
+        for k in range(1, 6):
+            rows.append([SHAPE_NAMES[k - 1], _f(st.get(f"num_pct_C{k}")), _f(st.get(f"vol_pct_C{k}")),
+                         _f(st.get(f"band_vol_pct_C{k}"))])
+        rows.append(["Particles classified", str(st.get("n_counted", 0)), "", f"{st.get('n_band', 0)} in band"])
+        out.append(_table(rows, [70 * mm, 30 * mm, 30 * mm, 45 * mm]))
+        rows = [["Descriptor (median)", "Value"],
+                ["D50 by number (area-equivalent diameter)", _f(st.get("D50_num_um"), 1, " um")],
+                ["Particles below 20 um, % by number", _f(st.get("fines_lt20um_num_pct"), 1, " %")]]
+        rows += [[k, _f(st.get(f"median_{k}"), 3)] for k in ("Circularity", "Solidity", "Convexity", "W/L Aspect Ratio", "Extent")]
+    else:
+        out += [_img(r["original"], 150), Spacer(1, 2 * mm)]
+        rows = [["Size by volume (laser diffraction)", "Value"]]
+        rows += [[f"D{p}", _f(st.get(f"LD_D{p}"), 1, " um")] for p in (10, 50, 90)]
+        rows += [["Span, (D90 - D10) / D50", _f(st.get("LD_span"), 2)],
+                 ["Mean by volume (MV) / by area (MA) / by number (MN)",
+                  f"{_f(st.get('LD_MV'), 1)} / {_f(st.get('LD_MA'), 1)} / {_f(st.get('LD_MN'), 1)} um"]]
+    out.append(Spacer(1, 2 * mm))
+    out.append(_table(rows, [118 * mm, 52 * mm]))
+    out.append(Spacer(1, 2 * mm))
+    out.append(Paragraph(_plain(r.get("note", "")), SMALL))
+    out.extend(_warnings(r))
+    return out
 
 
 def _image_section(r):
+    if r.get("source", "sem") != "sem":
+        return _microtrac_section(r)
     st, info = r["stats"], r["image_info"]
     out = [Paragraph(r["name"], H2)]
     meta = f"Sample <b>{r['sample']}</b> &nbsp; | &nbsp; {info['native_size'][0]} x {info['native_size'][1]} px"
@@ -201,6 +252,17 @@ def _image_section(r):
     return out
 
 
+def _gallery_text():
+    from .microtrac import load_calibration
+    c = load_calibration()[2]
+    if not c.get("held_out_class_agreement"):
+        return ""
+    return (f" A correction fitted on {c.get('reports', 0)} reports paired with their tables puts the silhouette "
+            f"descriptors on the Microtrac scale; on reports left out of the fit, "
+            f"{100 * c['held_out_class_agreement']:.0f} % of particles got the same class as from the table and "
+            f"class shares differed by at most {c.get('held_out_max_share_difference_pp', 0):.1f} points.")
+
+
 def build_report(results, path, title=None):
     """Write a PDF for one result or a list of results (a batch)."""
     if isinstance(results, dict):
@@ -210,9 +272,12 @@ def build_report(results, path, title=None):
     title = title or f"{what} report"
     doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
                             topMargin=14 * mm, bottomMargin=16 * mm, title=title, author=APP_NAME)
+    sem = [r for r in results if r.get("source", "sem") == "sem"]
+    mt = [r for r in results if r.get("source", "sem") != "sem"]
+    what_n = "image" if not mt else "file"
     el = [Paragraph(title, H1),
           Paragraph(f"{APP_NAME} {__version__} &nbsp; | &nbsp; {dt.datetime.now():%Y-%m-%d %H:%M} &nbsp; | &nbsp; "
-                    f"{len(results)} image{'s' if len(results) > 1 else ''}", SMALL),
+                    f"{len(results)} {what_n}{'s' if len(results) > 1 else ''}", SMALL),
           Spacer(1, 3 * mm)]
 
     if kind == "classification":
@@ -223,16 +288,27 @@ def build_report(results, path, title=None):
                             "every particle adds its area times its probability. Particles with a probability between "
                             "0.35 and 0.65 are reported as borderline and drawn in a lighter shade.", BODY))
     else:
-        el.append(Paragraph("Particles above 10 um are segmented and their outlines measured with Microtrac-style "
-                            "descriptors (circularity, solidity, convexity, W/L aspect ratio, extent). Each particle "
-                            "is assigned to one of five shape classes (C1-C5) by a fixed k-means model fitted on "
-                            "Microtrac SYNC data. SEM outlines are sharper than dynamic image analysis outlines and "
-                            "touching particles are split by the software, so the SEM shares rank samples against "
-                            "each other and are not on the Microtrac scale. The C5 share moves by several points with "
-                            "how strongly touching particles are split; compare samples imaged and analysed the same "
-                            "way.", BODY))
+        if sem:
+            el.append(Paragraph("<b>SEM images.</b> Particles above 10 um are segmented and their outlines measured "
+                                "with Microtrac-style descriptors (circularity, solidity, convexity, W/L aspect "
+                                "ratio, extent). Each particle is assigned to one of five shape classes (C1-C5) by a "
+                                "fixed k-means model fitted on Microtrac SYNC data. SEM outlines are sharper than "
+                                "dynamic image analysis outlines and touching particles are split by the software, so "
+                                "the SEM shares rank samples against each other and are not on the Microtrac scale. "
+                                "The C5 share moves by several points with how strongly touching particles are "
+                                "split; compare samples imaged and analysed the same way.", BODY))
+        if mt:
+            cal = _gallery_text() if any(r["source"] == "gallery" for r in mt) else ""
+            el.append(Paragraph("<b>Microtrac files.</b> A particle table (.xls) is classified from Microtrac's own "
+                                "descriptors for every particle and gives shares by number, by volume and in the "
+                                "30-100 um band. A particle report (PDF or page pictures) prints each particle as a "
+                                "silhouette; the silhouettes are measured again and given the same five classes. "
+                                "A report holds only part of the sample and no sizes, so its shares are by number "
+                                "of the particles shown and are not comparable with shares by volume." + cal +
+                                " A size report gives the laser diffraction percentiles and no shape classes.", BODY))
     el.append(Spacer(1, 2 * mm))
-    el.append(_table(_settings_rows(results[0]), [38 * mm, 142 * mm], header=False, align_right_from=9))
+    if sem or kind == "classification":
+        el.append(_table(_settings_rows((sem or results)[0]), [38 * mm, 142 * mm], header=False, align_right_from=9))
 
     if len(results) > 1:
         el.append(Paragraph("Summary by sample", H2))
@@ -267,16 +343,38 @@ def build_report(results, path, title=None):
             el.append(_table(rows, [58 * mm, 30 * mm, 20 * mm, 22 * mm, 18 * mm, 30 * mm]))
         else:
             summ = summarise_morphology(results)
-            rows = [["Sample", "Fields", "Particles"] + [f"C{k} vol%" for k in range(1, 6)] + ["C5 band vol%", "D50 um"]]
-            for s in summ:
-                rows.append([s["sample"], s["fields"], s.get("n_counted", 0)] +
-                            [_f(s.get(f"vol_pct_C{k}")) for k in range(1, 6)] +
-                            [_f(s.get("band_vol_pct_C5")), _f(s.get("D50_num_um"), 0)])
-            el.append(_table(rows, [36 * mm, 12 * mm, 16 * mm] + [16 * mm] * 5 + [20 * mm, 16 * mm]))
-            el.append(Paragraph("Shares pool all classified particles of a sample's fields. "
-                                "Band = particles of 30-100 um area-equivalent diameter.", SMALL))
-            el.append(_bar([s["sample"] for s in summ], [s.get("band_vol_pct_C5", float("nan")) for s in summ],
-                           "C5 (branched / agglomerate), % of volume in the 30-100 um band", SHAPE_RGB[4]))
+            shapes = [x for x in summ if x["source"] != "size"]
+            sizes = [x for x in summ if x["source"] == "size"]
+            if shapes:
+                rows = [["Sample", "Files", "Particles", "Basis"] + [f"C{k} %" for k in range(1, 6)] +
+                        ["C5 band vol%", "D50 um"]]
+                for x in shapes:
+                    num = x["source"] == "gallery"
+                    key = "num_pct_C" if num else "vol_pct_C"
+                    rows.append([_plain(x["sample"]), x["fields"], x.get("n_counted", 0), "number" if num else "volume"] +
+                                [_f(x.get(f"{key}{k}")) for k in range(1, 6)] +
+                                ["-" if num else _f(x.get("band_vol_pct_C5")), "-" if num else _f(x.get("D50_num_um"), 0)])
+                el.append(_table(rows, [42 * mm, 11 * mm, 16 * mm, 15 * mm] + [13 * mm] * 5 + [19 * mm, 13 * mm]))
+                el.append(Paragraph("Shares pool all classified particles of a sample's files. Basis: by volume for "
+                                    "SEM fields and Microtrac tables, by number for Microtrac report silhouettes, "
+                                    "which carry no sizes. Band = particles of 30-100 um area-equivalent diameter.",
+                                    SMALL))
+                vol = [x for x in shapes if x["source"] != "gallery"]
+                if vol:
+                    el.append(_bar([_plain(x["sample"]) for x in vol], [x.get("band_vol_pct_C5", float("nan")) for x in vol],
+                                   "C5 (branched / agglomerate), % of volume in the 30-100 um band", SHAPE_RGB[4]))
+                gal = [x for x in shapes if x["source"] == "gallery"]
+                if gal and (len(gal) > 1 or not vol):
+                    el.append(_bar([_plain(x["sample"]) for x in gal], [x.get("num_pct_C5", float("nan")) for x in gal],
+                                   "C5 (branched / agglomerate), % by number of the particles shown in the report",
+                                   SHAPE_RGB[4]))
+            if sizes:
+                el.append(Paragraph("Size reports (laser diffraction, by volume)", H2))
+                rows = [["Sample", "D10 um", "D50 um", "D90 um", "Span", "MV um"]]
+                for x in sizes:
+                    rows.append([_plain(x["sample"]), _f(x.get("LD_D10")), _f(x.get("LD_D50")), _f(x.get("LD_D90")),
+                                 _f(x.get("LD_span"), 2), _f(x.get("LD_MV"))])
+                el.append(_table(rows, [60 * mm, 22 * mm, 22 * mm, 22 * mm, 22 * mm, 22 * mm]))
     for r in results:
         el.append(PageBreak())
         el.extend(_image_section(r))

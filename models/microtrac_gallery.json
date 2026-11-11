@@ -1,0 +1,28 @@
+{
+ "features": [
+  "Circularity",
+  "Solidity",
+  "Convexity",
+  "W/L Aspect Ratio",
+  "Extent"
+ ],
+ "slope": [
+  1.13517,
+  1.07801,
+  1.05053,
+  1.01735,
+  1.06746
+ ],
+ "intercept": [
+  -0.02805,
+  -0.06146,
+  -0.00724,
+  -0.01796,
+  -0.04041
+ ],
+ "cell_px": 50,
+ "reports": 3,
+ "particles": 3900,
+ "held_out_class_agreement": 0.929,
+ "held_out_max_share_difference_pp": 1.69
+}

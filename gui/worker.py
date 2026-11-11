@@ -5,7 +5,7 @@ import traceback
 from PIL import Image
 from PySide6.QtCore import QObject, QThread, Signal
 
-from cauliquant.analysis import classify_image, morphology_image
+from cauliquant.analysis import classify_image, morphology_input
 
 
 def _jpeg(a, q=92):
@@ -29,7 +29,7 @@ class Worker(QObject):
         self._cancel = True
 
     def run(self):
-        fn = classify_image if self.kind == "classification" else morphology_image
+        fn = classify_image if self.kind == "classification" else morphology_input
         for idx, path in self.items:
             if self._cancel:
                 break

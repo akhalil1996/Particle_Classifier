@@ -17,6 +17,10 @@ from skimage import measure
 from .resources import SHAPE_MODEL as MODEL
 FEAT = ["Circularity", "Solidity", "Convexity", "W/L Aspect Ratio", "Extent"]
 SHORT = ["C1", "C2", "C3", "C4", "C5"]
+SHAPE_RGB = [(76, 120, 168), (114, 183, 178), (238, 202, 59), (178, 121, 162), (228, 87, 86)]
+SHAPE_NAMES = ["C1 compact", "C2 elongated smooth", "C3 blocky rough", "C4 elongated concave",
+               "C5 branched / agglomerate"]
+BAND = (30.0, 100.0)          # um, area-equivalent diameter: the band shares are reported for
 
 
 class ShapeClasses:
@@ -36,6 +40,41 @@ class ShapeClasses:
         out = d.argmin(1)
         out[~np.isfinite(X).all(1)] = -1
         return out
+
+
+def shape_stats(rows):
+    """Class shares by number, by volume and in the band, for particles with Da, Volume and shape_class."""
+    rows = [r for r in rows if r.get("shape_class", 0) > 0]
+    out = {"n_counted": len(rows)}
+    if not rows:
+        return out
+    da = np.array([r["Da"] for r in rows])
+    vol = np.array([r["Volume"] for r in rows])
+    cls = np.array([r["shape_class"] for r in rows])
+    band = (da >= BAND[0]) & (da < BAND[1])
+    for k in range(1, 6):
+        out[f"num_pct_C{k}"] = 100 * float((cls == k).mean())
+        out[f"vol_pct_C{k}"] = 100 * float(vol[cls == k].sum() / vol.sum())
+        out[f"band_vol_pct_C{k}"] = 100 * float(vol[band & (cls == k)].sum() / vol[band].sum()) if band.any() else float("nan")
+    out["n_band"] = int(band.sum())
+    out["D50_num_um"] = float(np.median(da))
+    for k in FEAT:
+        out[f"median_{k}"] = float(np.median([r[k] for r in rows]))
+    return out
+
+
+def number_stats(rows):
+    """Class shares by number only, for particles without a size (report silhouettes)."""
+    rows = [r for r in rows if r.get("shape_class", 0) > 0]
+    out = {"n_counted": len(rows)}
+    if not rows:
+        return out
+    cls = np.array([r["shape_class"] for r in rows])
+    for k in range(1, 6):
+        out[f"num_pct_C{k}"] = 100 * float((cls == k).mean())
+    for k in FEAT:
+        out[f"median_{k}"] = float(np.median([r[k] for r in rows]))
+    return out
 
 
 # ---- Microtrac SYNC exports --------------------------------------------------

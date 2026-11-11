@@ -6,7 +6,7 @@ Desktop software that measures porous **cauliflower** agglomerates and particle 
 |---|---|
 | **Home** | What the software does, version, image requirements, which classification model is loaded |
 | **Particle classification** | Segments every particle above 10 µm, gives it a cauliflower probability (U-Net reading of the surface combined with outline shape and surface relief), and reports the cauliflower share of particle area (and volume) inside a counting frame, with borderline particles, quality warnings and, per sample, a 95 % interval over fields |
-| **Morphology profiling** | Assigns every particle to one of five shape classes (C1 compact … C5 branched / agglomerate) with the k-means model fitted on Microtrac SYNC data |
+| **Morphology profiling** | Assigns every particle to one of five shape classes (C1 compact … C5 branched / agglomerate) with the k-means model fitted on Microtrac SYNC data, on SEM images and on Microtrac exports (particle report PDF or page pictures, particle table .xls, size report PDF) |
 
 Each analysis tab takes **one image** or **a whole folder** (batch). The viewer switches between the original and the analysed image, the results sit on the right, and **Export PDF report** / **Export CSV** save the results. In batch mode fields are pooled into samples by file name: everything before `_x` is the sample (`384_x100_0031` → `384`).
 
@@ -17,6 +17,19 @@ Download `CauliQuant-Setup-<version>.exe` from the repository's **Releases** pag
 ## Images
 
 Secondary-electron images at x100, ideally 2560 × 1920 px (0.496 µm/px), particles spread as a monolayer. The pixel size is read from the Hitachi SU3500 metadata (`.txt` next to the image, or TIFF tag 40092); otherwise enter it in the Settings bar. Images at another pixel size are resampled to 0.496 µm/px before analysis. The data bar is detected and left out.
+
+## Microtrac files (morphology tab)
+
+Open them with **Open files…** or **Open folder…** next to, or instead of, SEM images. Each file is recognised by its content:
+
+| File | What the tab reads | Shares |
+|---|---|---|
+| Particle report, `…(All particles).pdf` (SYNC viewer, "Particles") | every printed silhouette, measured again and given the C1-C5 class | by number, of the particles shown |
+| Pictures of report pages (`…ViewerReport_page1.jpg`, PNG) | same, from the page picture | by number, of the particles shown |
+| Particle table, `…(All particles).xls` | Microtrac's own descriptors for every particle | by number, by volume, and by volume in the 30-100 µm band |
+| Size report, `<batch>.pdf` ("Particle Size Analysis") | D10, D50, D90, span, MV / MA / MN | none (no shapes) |
+
+The report prints each particle scaled to the same small cell, with no size, and only the first particles of the viewer list (about 1,300 of several thousand, the widest when sorted by FWidth), so its shares are by number of the particles shown and do not compare with shares by volume. The particle table is the complete record and should be preferred when it is available. A silhouette's outline is a little longer than Microtrac's own, so a linear correction per descriptor (`models/microtrac_gallery.json`, refit with `backend/fit_gallery_calibration.py --pair report.pdf table.xls …`) puts the silhouettes on the Microtrac scale: fitted on three reports with their tables, 93 % of particles of a report left out of the fit got the same class as from the table, and class shares differed by at most 1.7 points. Pictures should be page exports or straight scans; a phone photo at an angle distorts the shapes. Microtrac exports are named after the SOP and a time stamp, so their batch is taken from the folder they sit in (`382/H0131…pdf` → `382`).
 
 ## Reading a result
 
@@ -34,7 +47,8 @@ run_app.py              start the app (python run_app.py)
 gui/                    the window (PySide6)
 cauliquant/             analysis package: segmentation, features, counting frame, U-Net, shape classes, reports
 models/                 cauliflower_unet.onnx (network), cauliflower_unet.json (its model card: particle
-                        classifier, validated SEM settings, measured error), shape_classes_k5.json (C1-C5 model)
+                        classifier, validated SEM settings, measured error), shape_classes_k5.json (C1-C5 model),
+                        microtrac_gallery.json (silhouette correction for Microtrac particle reports)
 backend/                command-line tools, not part of the installer:
   classify_folder.py      batch classification folder A -> folder B (masks, overlays, summary.csv)
   train.py                train the U-Net on labelled A/B pairs, with the training monitor
@@ -42,6 +56,7 @@ backend/                command-line tools, not part of the installer:
   fit_classifier.py       fit the particle classifier on labelled fields, check it on samples it has not
                           seen, and write the model card
   morphology_profile.py   Microtrac SYNC exports and SEM results per batch, and their correlation
+  fit_gallery_calibration.py  refit the silhouette correction from report PDFs paired with their .xls tables
   import_labels.py        bring labelling-bench labels into folder B
 packaging/              PyInstaller spec and Inno Setup installer script
 .github/workflows/      builds the Windows installer on GitHub
