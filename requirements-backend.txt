@@ -1,0 +1,5 @@
+# Back end only: training the U-Net and Microtrac batch tools (not bundled in the installer)
+-r requirements.txt
+pandas>=2.0
+torch>=2.2
+onnx>=1.16

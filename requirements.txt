@@ -1,0 +1,8 @@
+# Desktop app (what the installer bundles)
+numpy>=2.0,<3
+scipy>=1.13
+scikit-image>=0.24,<0.27
+pillow>=10
+onnxruntime>=1.18
+PySide6-Essentials>=6.7
+reportlab>=4.0
