@@ -34,6 +34,7 @@ QLabel#appSub { font-size: 12.5pt; color: #33383F; }
 QLabel#intro { font-size: 10.5pt; line-height: 140%; }
 QLabel#section { font-size: 11pt; font-weight: 700; color: #1F4E79; padding: 4px 0; }
 QLabel#muted, QLabel#legendText { color: #656D76; font-size: 9pt; }
+QLabel#warnBox { background: #FFF4E0; color: #8A4B08; border: 1px solid #F2C97D; border-radius: 6px; padding: 8px; font-size: 9pt; }
 QLabel#bigNumber { font-size: 30pt; font-weight: 800; color: #1F2328; }
 QProgressBar { border: 1px solid #D0D7DE; border-radius: 6px; background: #FFFFFF; text-align: center; height: 20px; }
 QProgressBar::chunk { background: #4C8BC2; border-radius: 5px; }

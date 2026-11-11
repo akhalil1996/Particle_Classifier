@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QH
 
 from cauliquant import __version__, APP_NAME
 from cauliquant.resources import DEFAULT_UNET, resource
+from cauliquant.classifier import load_card
 from .analysis_tab import AnalysisTab
 
 ABOUT_TEXT = ("Developed at McGill University for quality control of titanium powder produced by molten salt "
@@ -77,9 +78,11 @@ class HomeTab(QScrollArea):
         grid = QGridLayout()
         grid.setSpacing(12)
         grid.addWidget(card("Particle classification",
-                            "Segments every particle above 10 µm, scores it with a trained U-Net as "
-                            "<b>cauliflower</b> or <b>dense</b>, and reports the cauliflower share of particle area "
-                            "and volume inside a counting frame. Overlays show every call."), 0, 0)
+                            "Segments every particle above 10 µm and gives it a probability of being "
+                            "<b>cauliflower</b>, from a trained U-Net's reading of the surface combined with outline "
+                            "shape and surface relief. Reports the cauliflower share of particle area and volume "
+                            "inside a counting frame. Overlays show every call; borderline particles are drawn in a "
+                            "lighter shade."), 0, 0)
         grid.addWidget(card("Morphology profiling",
                             "Measures circularity, solidity, convexity, aspect ratio and extent on each SEM particle "
                             "outline and assigns it to one of five shape classes, <b>C1 compact</b> to "
@@ -117,6 +120,18 @@ class HomeTab(QScrollArea):
         row.addWidget(req, 1)
         lay.addLayout(row)
 
+        trust = card("How far to trust a result",
+                     "<b>One image is a rough number.</b> Fields of the same stub differ by about 10 points, so a "
+                     "sample needs several fields. In batch mode each sample gets a 95 % interval over its fields "
+                     "and an estimate of how many fields a ±5 point interval would take."
+                     "<br><b>Some particles are borderline.</b> About a third of particles sit between the two "
+                     "classes. They are drawn in a lighter shade and their share of the area is reported, so you can "
+                     "see how much of a result rests on them."
+                     "<br><b>Warnings matter.</b> An image is flagged when its SEM settings differ from the ones the "
+                     "model was validated on, when the field is crowded, soft or saturated, or when it holds few "
+                     "particles. The model's measured error on batches it never saw is printed in every report.")
+        lay.addWidget(trust)
+
         mf = QFrame()
         mf.setObjectName("card")
         ml = QHBoxLayout(mf)
@@ -143,8 +158,16 @@ class HomeTab(QScrollArea):
         p = self.mw.model_path()
         builtin = os.path.normcase(os.path.abspath(p)) == os.path.normcase(os.path.abspath(DEFAULT_UNET))
         state = "" if os.path.exists(p) else " <span style='color:#B42318'>(file not found)</span>"
-        self.model_label.setText(f"<b>Classification model:</b> {'built-in U-Net' if builtin else os.path.basename(p)}"
-                                 f"{state}<br><span style='color:#656D76'>{p}</span>")
+        c = load_card(p) if os.path.exists(p) else {}
+        v = c.get("validated", {})
+        if c.get("classifier"):
+            extra = (f"<br>{c.get('name', '')}. Validated for x{v.get('magnification', 100):.0f}, {v.get('kv', 15):.0f} kV, "
+                     f"spot intensity {v.get('spot', 50):.0f}, scan {v.get('scan', '')}, {v.get('um_px', 0.496):.3f} µm/px.")
+        else:
+            extra = ("<br><span style='color:#B54708'>No model card next to this file: the raw network score is used "
+                     "and results are not validated.</span>") if os.path.exists(p) else ""
+        self.model_label.setText(f"<b>Classification model:</b> {'built-in' if builtin else os.path.basename(p)}"
+                                 f"{state}{extra}<br><span style='color:#656D76'>{p}</span>")
 
 
 class MainWindow(QMainWindow):

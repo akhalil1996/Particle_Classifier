@@ -15,7 +15,7 @@ from reportlab.graphics.shapes import Drawing, String
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 
 from . import __version__, APP_NAME
-from .analysis import (CAULI_RGB, DENSE_RGB, SHAPE_RGB, SHAPE_NAMES, FRAME_RGB,
+from .analysis import (CAULI_RGB, DENSE_RGB, CAULI_SOFT_RGB, DENSE_SOFT_RGB, SHAPE_RGB, SHAPE_NAMES, FRAME_RGB,
                        summarise_classification, summarise_morphology)
 
 ACCENT = colors.HexColor("#1F4E79")
@@ -24,6 +24,8 @@ H1 = ParagraphStyle("h1", parent=_ss["Heading1"], fontSize=17, textColor=ACCENT,
 H2 = ParagraphStyle("h2", parent=_ss["Heading2"], fontSize=12.5, textColor=ACCENT, spaceBefore=8, spaceAfter=4)
 BODY = ParagraphStyle("body", parent=_ss["BodyText"], fontSize=9, leading=12)
 SMALL = ParagraphStyle("small", parent=BODY, fontSize=7.5, leading=9.5, textColor=colors.HexColor("#555555"))
+WARN = ParagraphStyle("warn", parent=BODY, fontSize=8.5, leading=11, textColor=colors.HexColor("#8A4B08"),
+                      backColor=colors.HexColor("#FFF4E0"), borderPadding=4, spaceBefore=4, spaceAfter=4)
 
 RULE_TEXT = {
     "half": "a particle counts if more than half of its area lies inside the frame and it is not cut by the image border",
@@ -109,14 +111,45 @@ def _footer(canvas, doc):
     canvas.restoreState()
 
 
+def _validated_text(v):
+    if not v:
+        return ""
+    return (f"x{v.get('magnification', 100):.0f}, {v.get('kv', 15):.0f} kV, spot intensity {v.get('spot', 50):.0f}, "
+            f"scan {v.get('scan', '')}, {v.get('signal', 'SE')} detector, {v.get('um_px', 0.496):.3f} um/px")
+
+
 def _settings_rows(r):
     s = r["settings"]
     rows = [["Frame rule", f"{s['frame_rule']} ({RULE_TEXT.get(s['frame_rule'], '')}), inset {s['inset_um']:.0f} um"]]
     if r["kind"] == "classification":
-        rows += [["Model", s["model_path"]], ["Cauliflower cut-off", f"score > {s['cutoff']:.2f}"]]
+        m = r.get("model", {})
+        model = s["model_path"] + (f" ({m['name']})" if m.get("name") else "")
+        if m.get("sha256"):
+            model += f", file fingerprint {m['sha256'][:12]}"
+        rows += [["Model", model],
+                 ["Result", f"{m.get('estimator', 'particle calls')}; a particle is drawn as cauliflower when its "
+                            f"probability is above {s['cutoff']:.2f}"]]
+        if m.get("validated"):
+            rows.append(["Validated for", _validated_text(m["validated"])])
+        v = m.get("validation") or {}
+        if v:
+            txt = (f"on batches the model never saw: one field within about {v.get('field_mae_pp', float('nan')):.0f} "
+                   f"points of the reference on average, a pooled batch within about "
+                   f"{v.get('batch_rms_error_pp', float('nan')):.0f} points (largest {v.get('batch_max_error_pp', float('nan')):.0f}).")
+            if "accuracy_borderline_particles" in v:
+                txt += (f" Clear particles are called correctly {100 * v['accuracy_clear_particles']:.0f} % of the time, "
+                        f"borderline ones {100 * v['accuracy_borderline_particles']:.0f} %.")
+            rows.append(["Measured error", txt])
     rows += [["Pixel size", "entered by user: %.4f um/px" % s["um_px_override"] if s["um_px_override"] else "from each image's SEM metadata"],
              ["Resampling", "to 0.496 um/px when the image pixel size differs by more than 5%" if s["resample"] else "off"]]
     return [[Paragraph(f"<b>{a}</b>", BODY), Paragraph(b, BODY)] for a, b in rows]
+
+
+def _warnings(r):
+    w = r.get("warnings") or []
+    if not w:
+        return []
+    return [Paragraph("<b>Check this image:</b> " + " ".join(w), WARN)]
 
 
 def _image_section(r):
@@ -136,14 +169,20 @@ def _image_section(r):
     imgs.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     out.append(imgs)
     if r["kind"] == "classification":
-        out.append(_legend([(CAULI_RGB, "cauliflower"), (DENSE_RGB, "dense"), (FRAME_RGB, "counting frame")], 28))
+        out.append(_legend([(CAULI_RGB, "cauliflower"), (CAULI_SOFT_RGB, "borderline, cauliflower"),
+                            (DENSE_SOFT_RGB, "borderline, dense"), (DENSE_RGB, "dense"), (FRAME_RGB, "frame")], 30))
         rows = [["Result", "Value"],
                 ["Cauliflower, % of particle area", _f(st["cauliflower_area_pct"], 1, " %")],
                 ["Cauliflower, % of volume (sphere-equivalent)", _f(st["cauliflower_vol_pct"], 1, " %")],
-                ["Particles counted (cauliflower / dense)", f"{st['n_counted']} ({st['n_cauliflower']} / {st['n_dense']})"],
+                ["Counting only particles called cauliflower, % of area", _f(st.get("calls_area_pct"), 1, " %")],
+                ["Area held by borderline particles", _f(st.get("borderline_area_pct"), 1, " %")],
+                ["Particles counted (cauliflower / dense / of which borderline)",
+                 f"{st['n_counted']} ({st['n_cauliflower']} / {st['n_dense']} / {st.get('n_borderline', 0)})"],
                 ["Median size, cauliflower / dense (ECD)", f"{_f(st['median_ecd_cauliflower_um'], 0)} / {_f(st['median_ecd_dense_um'], 0)} um"],
                 ["Not counted: below 10 um / outside frame", f"{st['n_small']} / {st['n_outside_frame']}"],
-                ["Counting frame", f"{st['frame_um'][0]:.0f} x {st['frame_um'][1]:.0f} um"]]
+                ["Counting frame", f"{st['frame_um'][0]:.0f} x {st['frame_um'][1]:.0f} um"],
+                ["Image covered by particles / large-particle area in touching clusters",
+                 f"{_f(st.get('coverage_pct'), 0)} % / {_f(st.get('touching_area_pct'), 0)} %"]]
     else:
         out.append(_legend([(SHAPE_RGB[k], SHAPE_NAMES[k]) for k in range(5)]))
         rows = [["Shape class", "% by number", "% by volume", "% by volume, 30-100 um"]]
@@ -157,7 +196,8 @@ def _image_section(r):
         for k in ("Circularity", "Solidity", "Convexity", "W/L Aspect Ratio", "Extent"):
             rows.append([k, _f(st.get(f"median_{k}"), 3)])
     out.append(Spacer(1, 2 * mm))
-    out.append(_table(rows, [100 * mm, 60 * mm]))
+    out.append(_table(rows, [118 * mm, 52 * mm]))
+    out.extend(_warnings(r))
     return out
 
 
@@ -176,16 +216,21 @@ def build_report(results, path, title=None):
           Spacer(1, 3 * mm)]
 
     if kind == "classification":
-        el.append(Paragraph("Particles above 10 um equivalent diameter are segmented and each is scored by a "
-                            "U-Net as porous cauliflower agglomerate or dense particle. The cauliflower share is "
-                            "the projected area of cauliflower particles over the area of all counted particles "
-                            "inside the counting frame.", BODY))
+        el.append(Paragraph("Particles above 10 um equivalent diameter are segmented. Each one gets a probability of "
+                            "being a porous cauliflower agglomerate, from a U-Net's reading of its surface combined "
+                            "with its outline shape and surface relief. The cauliflower share is the "
+                            "probability-weighted projected area of all counted particles inside the counting frame: "
+                            "every particle adds its area times its probability. Particles with a probability between "
+                            "0.35 and 0.65 are reported as borderline and drawn in a lighter shade.", BODY))
     else:
         el.append(Paragraph("Particles above 10 um are segmented and their outlines measured with Microtrac-style "
                             "descriptors (circularity, solidity, convexity, W/L aspect ratio, extent). Each particle "
                             "is assigned to one of five shape classes (C1-C5) by a fixed k-means model fitted on "
-                            "Microtrac SYNC data. SEM outlines are sharper than dynamic image analysis outlines, so "
-                            "the SEM shares indicate trends between samples and are not on the Microtrac scale.", BODY))
+                            "Microtrac SYNC data. SEM outlines are sharper than dynamic image analysis outlines and "
+                            "touching particles are split by the software, so the SEM shares rank samples against "
+                            "each other and are not on the Microtrac scale. The C5 share moves by several points with "
+                            "how strongly touching particles are split; compare samples imaged and analysed the same "
+                            "way.", BODY))
     el.append(Spacer(1, 2 * mm))
     el.append(_table(_settings_rows(results[0]), [38 * mm, 142 * mm], header=False, align_right_from=9))
 
@@ -193,12 +238,24 @@ def build_report(results, path, title=None):
         el.append(Paragraph("Summary by sample", H2))
         if kind == "classification":
             summ = summarise_classification(results)
-            rows = [["Sample", "Fields", "Particles", "Cauliflower area %", "Field mean %", "Field SD"]]
+            rows = [["Sample", "Fields", "Particles", "Cauliflower area %", "95 % interval", "Field SD", "By calls %"]]
             for s in summ:
-                rows.append([s["sample"], s["fields"], s["particles"], _f(s["cauliflower_area_pct"]),
-                             _f(s["field_mean_pct"]), _f(s["field_sd_pct"])])
-            el.append(_table(rows, [50 * mm, 18 * mm, 22 * mm, 34 * mm, 28 * mm, 24 * mm]))
-            el.append(Paragraph("Cauliflower area % pools all counted particles of a sample's fields.", SMALL))
+                ci = f"{_f(s['ci_low_pct'])} to {_f(s['ci_high_pct'])}" if s["fields"] >= 3 else "needs 3 fields"
+                rows.append([s["sample"], s["fields"], s["particles"], _f(s["cauliflower_area_pct"]), ci,
+                             _f(s["field_sd_pct"]), _f(s["calls_area_pct"])])
+            el.append(_table(rows, [40 * mm, 14 * mm, 20 * mm, 32 * mm, 30 * mm, 18 * mm, 22 * mm]))
+            note = ("Cauliflower area % pools all counted particles of a sample's fields. The 95 % interval shows how "
+                    "far the pooled value could move if other fields of the same stub had been imaged (fields "
+                    "resampled 2000 times); it does not include the method error given under Measured error above. "
+                    "By calls = counting only particles drawn as cauliflower.")
+            need = [f"{s['sample']}: about {s['fields_for_5pp']} fields" for s in summ
+                    if s.get("fields_for_5pp") and s["fields"] >= 3 and s["fields_for_5pp"] > s["fields"]]
+            if need:
+                note += " For an interval of +/- 5 points, from the spread seen here: " + "; ".join(need) + "."
+            flagged = sum(s["warnings"] for s in summ)
+            if flagged:
+                note += f" {flagged} image{'s' if flagged > 1 else ''} carry a warning (see the image pages)."
+            el.append(Paragraph(note, SMALL))
             el.append(_bar([s["sample"] for s in summ], [s["cauliflower_area_pct"] for s in summ],
                            "Cauliflower area % by sample", CAULI_RGB))
             el.append(Paragraph("Per image", H2))

@@ -3,3 +3,4 @@
 pandas>=2.0
 torch>=2.2
 onnx>=1.16
+scikit-learn>=1.4

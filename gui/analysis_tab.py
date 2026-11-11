@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, Q
                                QHeaderView, QButtonGroup, QMessageBox, QToolButton, QMenu, QScrollArea,
                                QFrame, QSizePolicy, QAbstractItemView)
 
-from cauliquant.analysis import (Settings, list_images, IMAGE_EXT, CAULI_RGB, DENSE_RGB, SHAPE_RGB,
+from cauliquant.analysis import (Settings, list_images, IMAGE_EXT, CAULI_RGB, DENSE_RGB, CAULI_SOFT_RGB,
+                                 DENSE_SOFT_RGB, SHAPE_RGB,
                                  SHAPE_NAMES, FRAME_RGB, summarise_classification, summarise_morphology)
 from cauliquant.segment import data_bar_row
 from cauliquant.report import build_report, export_csv, export_summary_csv
@@ -210,8 +211,9 @@ class AnalysisTab(QWidget):
         self.viewer = ImageViewer()
         ml.addWidget(self.viewer, 1)
         if self.kind == "classification":
-            ml.addWidget(legend([(CAULI_RGB, "Cauliflower"), (DENSE_RGB, "Dense"), (FRAME_RGB, "Counting frame"),
-                                 ((150, 150, 150), "Not counted (outline only)")]))
+            ml.addWidget(legend([(CAULI_RGB, "Cauliflower"), (CAULI_SOFT_RGB, "Borderline, cauliflower"),
+                                 (DENSE_SOFT_RGB, "Borderline, dense"), (DENSE_RGB, "Dense"),
+                                 (FRAME_RGB, "Frame"), ((150, 150, 150), "Not counted")]))
         else:
             ml.addWidget(legend([(SHAPE_RGB[k], SHAPE_NAMES[k]) for k in range(5)] + [(FRAME_RGB, "Frame")]))
         hint = QLabel("Scroll to zoom, drag to pan, double-click to fit. Space switches original / analysed.")
@@ -269,8 +271,9 @@ class AnalysisTab(QWidget):
             self.sp_cut.setRange(0.05, 0.95)
             self.sp_cut.setSingleStep(0.05)
             self.sp_cut.setValue(0.5)
-            self.sp_cut.setToolTip("A particle is called cauliflower when the network's cauliflower score is above "
-                                   "this value. 0.5 = whichever class the network finds more likely.")
+            self.sp_cut.setToolTip("A particle is drawn and counted as cauliflower when its probability is above "
+                                   "this value. The headline area % weighs every particle by its probability, so "
+                                   "it does not depend on this cut-off.")
             lay.addWidget(self.sp_cut)
             lay.addSpacing(14)
         lay.addWidget(QLabel("Counting rule"))
@@ -317,6 +320,11 @@ class AnalysisTab(QWidget):
         L.addWidget(self.tbl)
         if self.kind == "morphology":
             L.addWidget(self.tbl2)
+        self.warn = QLabel("")
+        self.warn.setObjectName("warnBox")
+        self.warn.setWordWrap(True)
+        self.warn.setVisible(False)
+        L.addWidget(self.warn)
         self.info = QLabel("")
         self.info.setObjectName("muted")
         self.info.setWordWrap(True)
@@ -325,12 +333,14 @@ class AnalysisTab(QWidget):
         self.batch_title.setObjectName("section")
         L.addWidget(self.batch_title)
         if self.kind == "classification":
-            self.batch = make_table(["Sample", "Fields", "Particles", "Cauli. area %", "Field SD"])
+            self.batch = make_table(["Sample", "Fields", "Cauli. area %", "95 % interval", "Field SD"])
         else:
             self.batch = make_table(["Sample", "Fields", "Particles", "C5 vol %", "C5 vol % 30–100"])
         L.addWidget(self.batch)
         self.batch_note = QLabel("Samples are grouped by the part of the file name before “_x” "
-                                 "(e.g. 384_x100_0031 → 384). Each sample pools all particles of its fields.")
+                                 "(e.g. 384_x100_0031 → 384). Each sample pools all particles of its fields."
+                                 + (" The 95 % interval shows how far the pooled value could move with other fields "
+                                    "of the same stub; it needs at least 3 fields." if self.kind == "classification" else ""))
         self.batch_note.setObjectName("muted")
         self.batch_note.setWordWrap(True)
         L.addWidget(self.batch_note)
@@ -447,9 +457,10 @@ class AnalysisTab(QWidget):
         if i in self.results:
             st = self.results[i]["stats"]
             v = st.get("cauliflower_area_pct") if self.kind == "classification" else st.get("vol_pct_C5")
-            it.setText(f"{name}\n   {fmt(v, 1, ' %')} {'cauliflower' if self.kind == 'classification' else 'C5 by volume'}")
+            flag = "  ⚠" if self.results[i].get("warnings") else ""
+            it.setText(f"{name}{flag}\n   {fmt(v, 1, ' %')} {'cauliflower' if self.kind == 'classification' else 'C5 by volume'}")
             it.setForeground(QColor("#1F2328"))
-            it.setToolTip(self.paths[i])
+            it.setToolTip(self.paths[i] + ("\n" + "\n".join(self.results[i]["warnings"]) if flag else ""))
         elif i in self.errors:
             it.setText(f"{name}\n   failed")
             it.setForeground(QColor("#B42318"))
@@ -507,25 +518,37 @@ class AnalysisTab(QWidget):
             if self.kind == "morphology":
                 self.tbl2.setVisible(False)
             self.info.setText("")
+            self.warn.setVisible(False)
             return
         st, info = r["stats"], r["image_info"]
+        w = r.get("warnings") or []
+        self.warn.setText("<b>Check this image</b><br>" + "<br>".join("• " + x for x in w))
+        self.warn.setVisible(bool(w))
         if self.kind == "classification":
             self.big.setText(fmt(st["cauliflower_area_pct"], 1, " %"))
-            self.big_caption.setText("cauliflower, as a share of the projected area of all counted particles")
+            v = (r.get("model") or {}).get("validation") or {}
+            cap = "cauliflower, as a share of the projected area of all counted particles"
+            if v.get("field_mae_pp") is not None:
+                cap += (f". On batches the model never saw, one field was within about {v['field_mae_pp']:.0f} points "
+                        "of the reference on average.")
+            self.big_caption.setText(cap)
             self.bars.set_items([("Cauliflower (area)", st["cauliflower_area_pct"], CAULI_RGB),
                                  ("Dense (area)", 100 - st["cauliflower_area_pct"] if not math.isnan(st["cauliflower_area_pct"]) else float("nan"), DENSE_RGB),
                                  ("Cauliflower (volume)", st["cauliflower_vol_pct"], CAULI_RGB)])
             fill_table(self.tbl, [
+                ["Counting only particles called cauliflower", fmt(st.get("calls_area_pct"), 1, " % of area")],
+                ["Area held by borderline particles", fmt(st.get("borderline_area_pct"), 1, " %")],
                 ["Particles counted", st["n_counted"]],
                 ["  cauliflower", st["n_cauliflower"]],
                 ["  dense", st["n_dense"]],
-                ["Cauliflower area", fmt(st["cauliflower_area_um2"] / 1e3, 1, " ×10³ µm²")],
-                ["Dense area", fmt(st["dense_area_um2"] / 1e3, 1, " ×10³ µm²")],
+                ["  of which borderline", st.get("n_borderline", 0)],
                 ["Median size, cauliflower", fmt(st["median_ecd_cauliflower_um"], 0, " µm")],
                 ["Median size, dense", fmt(st["median_ecd_dense_um"], 0, " µm")],
                 ["Not counted: below 10 µm", st["n_small"]],
                 ["Not counted: outside frame", st["n_outside_frame"]],
                 ["Counting frame", f"{st['frame_um'][0]:.0f} × {st['frame_um'][1]:.0f} µm"],
+                ["Image covered by particles", fmt(st.get("coverage_pct"), 0, " %")],
+                ["Large-particle area in touching clusters", fmt(st.get("touching_area_pct"), 0, " %")],
             ])
         else:
             c5 = st.get("vol_pct_C5", float("nan"))
@@ -561,8 +584,9 @@ class AnalysisTab(QWidget):
         if not show:
             return
         if self.kind == "classification":
-            rows = [[s["sample"], s["fields"], s["particles"], fmt(s["cauliflower_area_pct"]), fmt(s["field_sd_pct"])]
-                    for s in summarise_classification(res)]
+            rows = [[s["sample"], s["fields"], fmt(s["cauliflower_area_pct"]),
+                     f"{fmt(s['ci_low_pct'])} – {fmt(s['ci_high_pct'])}" if s["fields"] >= 3 else "–",
+                     fmt(s["field_sd_pct"])] for s in summarise_classification(res)]
         else:
             rows = [[s["sample"], s["fields"], s.get("n_counted", 0), fmt(s.get("vol_pct_C5")), fmt(s.get("band_vol_pct_C5"))]
                     for s in summarise_morphology(res)]
