@@ -53,12 +53,6 @@ The back-end tools also need `pip install -r requirements-backend.txt` (adds PyT
 
 ## Building the installer
 
-GitHub builds it: every push to `main` produces the installer as a workflow artifact (Actions tab), and pushing a version tag publishes a Release:
-
-```
-# bump __version__ in cauliquant/__init__.py first
-git tag v0.1.0
-git push origin v0.1.0
-```
+GitHub builds it: every push to `main` builds the installer and publishes it on the Release named after the version in `cauliquant/__init__.py` (for example `v0.1.0`). To ship a new version, bump `__version__` and push; pushing again without a bump refreshes the installer on the existing release.
 
 To build on your own Windows PC instead: `pip install -r requirements.txt pyinstaller`, then `pyinstaller packaging/cauliquant.spec --noconfirm`, then compile `packaging/installer.iss` with Inno Setup 6. The installer appears in `installer/`.
