@@ -7,13 +7,23 @@ from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
                                QPushButton, QFileDialog, QMessageBox, QScrollArea, QGridLayout)
 
-from cauliquant import __version__, APP_NAME
+from cauliquant import __version__, APP_NAME, COPYRIGHT, GROUP
 from cauliquant.resources import DEFAULT_UNET, resource
 from cauliquant.classifier import load_card
 from .analysis_tab import AnalysisTab
 
-ABOUT_TEXT = ("Developed at McGill University for quality control of titanium powder produced by molten salt "
-              "electrolysis.")
+ABOUT_TEXT = ("Developed at McGill University, " + GROUP + ", for quality control of titanium powder produced by "
+              "molten salt electrolysis.")
+
+
+def logo_label(name, height):
+    from PySide6.QtGui import QPixmap
+    lab = QLabel()
+    p = resource("assets", name)
+    if os.path.exists(p):
+        pm = QPixmap(p)
+        lab.setPixmap(pm.scaledToHeight(height, Qt.SmoothTransformation))
+    return lab
 
 
 def card(title, body, accent="#1F4E79"):
@@ -62,6 +72,11 @@ class HomeTab(QScrollArea):
         tl.addWidget(sub)
         tl.addWidget(ver)
         head.addLayout(tl, 1)
+        logos = QVBoxLayout()
+        logos.setSpacing(6)
+        logos.addWidget(logo_label("mcgill_logo.png", 44), 0, Qt.AlignRight)
+        logos.addWidget(logo_label("p2am2_logo.png", 40), 0, Qt.AlignRight)
+        head.addLayout(logos)
         lay.addLayout(head)
 
         intro = QLabel(
@@ -88,7 +103,8 @@ class HomeTab(QScrollArea):
                             "outline and assigns it to one of five shape classes, <b>C1 compact</b> to "
                             "<b>C5 branched / agglomerate</b>, with the k-means model fitted on Microtrac SYNC data. "
                             "Also reads Microtrac exports: the particle report (PDF or page pictures), the particle "
-                            "table (.xls) and the laser diffraction size report (PDF)."),
+                            "table (.xls, .xlsx or .csv) and the laser diffraction size report (PDF or .csv). Open a "
+                            "folder and every sub-folder is read; the report adds figures across all batches."),
                        0, 1)
         grid.addWidget(card("Single image or whole folder",
                             "Open one micrograph, or a folder of fields for batch processing. Fields are grouped "
@@ -116,7 +132,8 @@ class HomeTab(QScrollArea):
                    "For other images, untick <i>Pixel size from SEM metadata</i> and enter it. Images at another "
                    "pixel size are resampled to 0.5 µm/px before analysis. The data bar at the bottom is detected "
                    "and left out. Accepted formats: TIFF, PNG, JPEG, BMP. The morphology tab also takes Microtrac "
-                   "PDF reports, pictures of report pages and .xls particle tables.")
+                   "PDF reports, pictures of report pages, particle tables (.xls, .xlsx, .csv) and size exports (.csv), "
+                   "and whole folder trees of them.")
         row = QHBoxLayout()
         row.setSpacing(12)
         row.addWidget(how, 1)
@@ -149,7 +166,7 @@ class HomeTab(QScrollArea):
         ml.addWidget(b2)
         lay.addWidget(mf)
 
-        about = QLabel(f"{ABOUT_TEXT}<br>{APP_NAME} {__version__} · Python {sys.version.split()[0]}")
+        about = QLabel(f"{ABOUT_TEXT}<br><b>{COPYRIGHT}</b><br>{APP_NAME} {__version__} · Python {sys.version.split()[0]}")
         about.setObjectName("muted")
         about.setWordWrap(True)
         lay.addWidget(about)
@@ -190,6 +207,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.tab_class, "Particle classification")
         self.tabs.addTab(self.tab_morph, "Morphology profiling")
         self.setCentralWidget(self.tabs)
+        self.statusBar().showMessage(COPYRIGHT)
         self.resize(1440, 900)
 
         m = self.menuBar().addMenu("&File")
@@ -241,7 +259,8 @@ class MainWindow(QMainWindow):
     def about(self):
         QMessageBox.about(self, f"About {APP_NAME}",
                           f"<h3>{APP_NAME} {__version__}</h3><p>SEM quantification of porous cauliflower "
-                          f"agglomerates and particle shape classes in titanium powder.</p><p>{ABOUT_TEXT}</p>")
+                          f"agglomerates and particle shape classes in titanium powder.</p><p>{ABOUT_TEXT}</p>"
+                          f"<p><b>{COPYRIGHT}</b></p>")
 
     def closeEvent(self, e):
         for t in (self.tab_class, self.tab_morph):

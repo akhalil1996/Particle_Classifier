@@ -7,3 +7,6 @@ onnxruntime>=1.18
 PySide6-Essentials>=6.7
 reportlab>=4.0
 pypdfium2>=4.30
+matplotlib>=3.8
+openpyxl>=3.1
+xlrd>=2.0

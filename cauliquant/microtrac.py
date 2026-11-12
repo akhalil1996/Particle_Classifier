@@ -9,11 +9,13 @@ Three kinds of file are read, next to SEM micrographs:
                      no sizes (every silhouette is scaled to the same cell) and
                      holds only the first particles of the viewer list, so the
                      result is a share by number of the particles shown.
-  particle table     the "(All particles).xls" export: Microtrac's own
-                     descriptors for every particle, with sizes. Gives shares by
-                     number, by volume and in the 30-100 um band.
-  size report        the laser diffraction "Particle Size Analysis" PDF:
-                     percentiles and mean sizes are read from its text.
+  particle table     the "(All particles).xls" export (or the same table saved
+                     as .xlsx or .csv): Microtrac's own descriptors for every
+                     particle, with sizes. Gives shares by number, by volume
+                     and in the 30-100 um band.
+  size report        the laser diffraction "Particle Size Analysis", as the
+                     PDF report or the <batch>.csv export: percentiles and
+                     mean sizes.
 
 Silhouette descriptors follow Microtrac's definitions (W/L = minimum Feret /
 maximum Feret, Extent = area / (min Feret x max Feret)). A 50 px silhouette
@@ -36,7 +38,9 @@ from .resources import resource
 from .shape_classes import ShapeClasses, FEAT, SHAPE_RGB, shape_stats, number_stats
 
 GALLERY_CAL = resource("models", "microtrac_gallery.json")
-MICROTRAC_EXT = (".pdf", ".xls")
+MICROTRAC_EXT = (".pdf", ".xls", ".xlsx", ".csv")
+EXTRA = ["Sphericity", "Compactness", "Roundness", "Ellipse Ratio", "Ellipticity", "Concavity", "Transparency"]
+N_EXEMPLARS = 12
 CELL_PX = 50                      # silhouette size the correction was fitted at
 WHITE = 235
 INK = 200
@@ -51,17 +55,42 @@ def sample_name(path):
 
     Exports are named after the SOP and a time stamp, so the batch is the folder
     they sit in ("382/H0131..._20261106_110724(All particles).pdf" -> 382). A
-    file with a name of its own ("382.pdf") keeps it.
+    file with a name of its own ("382.pdf", "382.csv") takes the folder's name too
+    when the folder is a batch folder (it holds a time-stamped export) or carries a
+    longer form of the same name ("collette 387-392/387-392.csv" -> "collette
+    387-392"); otherwise it keeps its own name.
     """
     stem = os.path.splitext(os.path.basename(path))[0]
+    d = os.path.dirname(os.path.abspath(path))
+    for _ in range(3):
+        b = os.path.basename(d)
+        if b and not re.match(r"(?i)new folder|pages?$|images?$|photos?$|pictures?$|viewer", b):
+            break
+        d = os.path.dirname(d)
+    folder = os.path.basename(d)
     if re.search(r"_\d{8}_\d{6}", stem) or "(all particles)" in stem.lower():
-        d = os.path.dirname(os.path.abspath(path))
-        for _ in range(3):
-            b = os.path.basename(d)
-            if b and not re.match(r"(?i)new folder|page|image|photo|picture", b):
-                return b
-            d = os.path.dirname(d)
-    return re.sub(r"(?i)[ _-]*(viewerreport)?[ _-]*page[ _-]*\d+$", "", stem) or stem
+        return folder or stem
+    stem = re.sub(r"(?i)[ _-]*(viewerreport)?[ _-]*page[ _-]*\d+$", "", stem) or stem
+    if folder and stem != folder and (stem.lower() in folder.lower() or _batch_folder(d)):
+        return folder
+    return stem
+
+
+def _batch_folder(d):
+    """True when the folder holds a time-stamped Microtrac export, i.e. it is one batch's folder."""
+    try:
+        return any("(all particles)" in f.lower() for f in os.listdir(d))
+    except OSError:
+        return False
+
+
+def run_date(path, text=""):
+    """Measurement date (YYYY-MM-DD) from the export's time stamp, or from the report text."""
+    m = re.search(r"_(20\d{2})(\d{2})(\d{2})_\d{6}", os.path.basename(path))
+    if m:
+        return "-".join(m.groups())
+    m = re.search(r"(20\d{2}-\d{2}-\d{2})", text or "")
+    return m.group(1) if m else ""
 
 
 # ------------------------------------------------------- silhouette shapes
@@ -126,8 +155,13 @@ def _to_cell(mask):
 # ------------------------------------------------------------ gallery input
 
 def looks_like_gallery(rgb):
-    """A report page is mostly white paper; an SEM field never is."""
-    return float((rgb.min(-1) > WHITE).mean()) > 0.6
+    """A report page is mostly white paper with dark grey silhouettes; an SEM field is never mostly white, and a
+    chart or a slide carries coloured marks rather than dark grey ones."""
+    if float((rgb.min(-1) > WHITE).mean()) <= 0.6:
+        return False
+    a = rgb.astype(np.int16)
+    grey_dark = (a.max(-1) < 110) & (a.max(-1) - a.min(-1) < 30)
+    return float(grey_dark.mean()) > 0.03
 
 
 def gallery_from_image(rgb):
@@ -277,11 +311,23 @@ def _tint(canvas, mask, y, x, rgb):
     reg[edge] = (0.6 * c).astype(np.uint8)
 
 
-def _result(path, source, original, analysed, rows, stats, note, settings, warnings=(), pages=1):
+def _result(path, source, original, analysed, rows, stats, note, settings, warnings=(), pages=1, run="", **extra):
     return dict(kind="morphology", source=source, name=os.path.splitext(os.path.basename(path))[0], path=path,
-                sample=f"{sample_name(path)} · {SOURCE_TEXT[source]}", batch=sample_name(path),
+                sample=sample_name(path), batch=sample_name(path), run=run,
                 original=original, analysed=analysed, rows=rows, stats=stats, warnings=list(warnings),
-                note=note, pages=pages, image_info={}, settings=settings, version=__version__)
+                note=note, pages=pages, image_info={}, settings=settings, version=__version__, **extra)
+
+
+def _exemplars(thumbs, rows, seed=0):
+    """Up to N_EXEMPLARS silhouette pictures per class, picked at random, for the class figure of the report."""
+    rng = np.random.default_rng(seed)
+    out = {}
+    for k in range(1, 6):
+        idx = [i for i, r in enumerate(rows) if r is not None and r["shape_class"] == k]
+        if idx:
+            pick = rng.choice(idx, size=min(N_EXEMPLARS, len(idx)), replace=False)
+            out[k] = [np.ascontiguousarray(thumbs[i]) for i in sorted(pick)]
+    return out
 
 
 GALLERY_NOTE = ("A viewer report prints only part of the sample (the first particles of the viewer list, the widest "
@@ -322,7 +368,8 @@ def gallery_pdf_result(path, settings, step):
     if head.get("date"):
         note += f", measured {head['date']}"
     note += ". " + GALLERY_NOTE
-    return _result(path, "gallery", original, analysed, rows, stats, note, settings, pages=pages)
+    return _result(path, "gallery", original, analysed, rows, stats, note, settings, pages=pages,
+                   run=run_date(path, head.get("date", "")), exemplars=_exemplars([a for a, _ in thumbs], rows_all))
 
 
 def gallery_image_result(path, rgb, settings, step):
@@ -345,36 +392,77 @@ def gallery_image_result(path, rgb, settings, step):
     warn = []
     if cell < 30:
         warn.append(f"The silhouettes are only about {cell:.0f} px across; shape classes are less reliable below 30 px.")
-    return _result(path, "gallery", rgb, analysed, rows, stats, note, settings, warn)
+    crops = []
+    for m, y, x in parts:
+        c = np.full(m.shape + (3,), 255, np.uint8)
+        c[m] = rgb[y:y + m.shape[0], x:x + m.shape[1]][m]
+        crops.append(c)
+    return _result(path, "gallery", rgb, analysed, rows, stats, note, settings, warn, run=run_date(path),
+                   exemplars=_exemplars(crops, rows_all))
 
 
 # -------------------------------------------------------------- table input
 
+def _cells(path):
+    """Rows of cells (strings or numbers) of a text table (tab or comma separated) or an Excel workbook."""
+    with open(path, "rb") as fh:
+        magic = fh.read(8)
+    if magic.startswith(b"PK"):                                   # .xlsx
+        from openpyxl import load_workbook
+        wb = load_workbook(path, read_only=True, data_only=True)
+        try:
+            return [list(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+        finally:
+            wb.close()
+    if magic.startswith(b"\xd0\xcf\x11\xe0"):                  # binary .xls saved by Excel
+        try:
+            import xlrd
+        except ImportError:
+            raise ValueError("This is a binary Excel file; save it as .xlsx or .csv and open it again.")
+        sh = xlrd.open_workbook(path).sheet_by_index(0)
+        return [sh.row_values(i) for i in range(sh.nrows)]
+    text = open(path, encoding="latin1").read()
+    lines = text.splitlines()
+    sep = "\t" if lines and lines[0].count("\t") >= lines[0].count(",") else ","
+    import csv
+    return list(csv.reader(lines, delimiter=sep))
+
+
 def read_table(path):
-    """'(All particles).xls' export (tab-separated text with a units row) as {column: float array}."""
-    lines = open(path, encoding="latin1").read().splitlines()
-    head = [c.strip() for c in lines[0].split("\t")]
+    """Microtrac particle table (.xls tab text as exported, or .xlsx / .csv) as {column: float array}."""
+    cells = [r for r in _cells(path) if r and any(c not in (None, "") for c in r)]
+    if not cells:
+        raise ValueError("This file is empty.")
+    head = [str(c).strip() if c is not None else "" for c in cells[0]]
+    head = [re.sub(r"\s+", " ", h) for h in head]
     if "Da" not in head or not all(f in head for f in FEAT):
         raise ValueError("This file is not a Microtrac particle table (columns Da, Circularity, Solidity, "
                          "Convexity, W/L Aspect Ratio and Extent are needed).")
+    ida = head.index("Da")
     data = []
-    for ln in lines[1:]:
-        p = ln.split("\t")
-        if len(p) < len(head):
-            continue
+    for r in cells[1:]:
         try:
-            float(p[head.index("Da")])
-        except ValueError:
-            continue                                  # units row
+            float(r[ida])
+        except (TypeError, ValueError, IndexError):
+            continue                                              # units row
         row = []
-        for v in p[:len(head)]:
+        for j in range(len(head)):
             try:
-                row.append(float(v))
-            except ValueError:
+                row.append(float(r[j]))
+            except (TypeError, ValueError, IndexError):
                 row.append(np.nan)
         data.append(row)
     a = np.array(data, float).reshape(-1, len(head))
-    return {h: a[:, j] for j, h in enumerate(head)}
+    return {h: a[:, j] for j, h in enumerate(head) if h}
+
+
+def is_size_csv(path):
+    try:
+        with open(path, encoding="latin1") as fh:
+            t = fh.read(4000)
+    except OSError:
+        return False
+    return "Percentiles" in t and "MV(um)" in t
 
 
 def _font(size):
@@ -419,8 +507,11 @@ def table_result(path, settings, step):
     step(0.6, "classifying")
     ids = t["Id"][keep] if "Id" in t else np.arange(1, keep.sum() + 1)
     vol = t["Volume"][keep] if "Volume" in t else np.pi / 6 * t["Da"][keep] ** 3
-    rows = [dict(id=int(i), Da=float(d), Volume=float(v), **{f: float(x) for f, x in zip(FEAT, xr)}, shape_class=int(c))
-            for i, d, v, xr, c in zip(ids, t["Da"][keep], vol, X, cls)]
+    extra = [e for e in EXTRA if e in t]
+    E = np.column_stack([t[e][keep] for e in extra]) if extra else np.zeros((int(keep.sum()), 0))
+    rows = [dict(id=int(i), Da=float(d), Volume=float(v), **{f: float(x) for f, x in zip(FEAT, xr)},
+                 **{e: float(x) for e, x in zip(extra, er)}, shape_class=int(c))
+            for i, d, v, xr, er, c in zip(ids, t["Da"][keep], vol, X, E, cls)]
     stats = shape_stats(rows)
     stats["n_all"] = n_all
     stats["fines_lt20um_num_pct"] = 100 * float((t["Da"] < 20).mean()) if n_all else float("nan")
@@ -436,7 +527,7 @@ def table_result(path, settings, step):
     if stats.get("n_band", 0) < 200:
         warn.append(f"Only {stats.get('n_band', 0)} particles fall in the 30–100 µm band; its shares rest on few particles.")
     step(1.0, "done")
-    return _result(path, "table", chart, chart, rows, stats, note, settings, warn)
+    return _result(path, "table", chart, chart, rows, stats, note, settings, warn, run=run_date(path))
 
 
 # --------------------------------------------------------------- size report
@@ -484,7 +575,46 @@ def size_result(path, settings, step):
     note = "Microtrac laser diffraction size report" + (f", measured {when}" if when else "") + \
            ". Percentiles are by volume. A size report has no particle shapes, so it gets no shape classes."
     step(1.0, "done")
-    return _result(path, "size", img, img, [], st, note, settings)
+    return _result(path, "size", img, img, [], st, note, settings, run=run_date(path, when))
+
+
+def size_csv_result(path, settings, step):
+    from .shape_classes import read_ld_summary
+    step(0.2, "reading the size data")
+    try:
+        ld = read_ld_summary(path)
+    except (AttributeError, ValueError) as e:
+        raise ValueError("No percentile table found in this size export.") from e
+    st = {f"LD_{k}": v for k, v in ld.items()}
+    if "LD_D50" not in st:
+        raise ValueError("No percentile table found in this size export.")
+    if "LD_D10" in st and "LD_D90" in st:
+        st["LD_span"] = (st["LD_D90"] - st["LD_D10"]) / st["LD_D50"]
+    st["n_counted"] = 0
+    text = open(path, encoding="latin1").read()
+    m = re.search(r"Date:\s*,\s*([\d-]+)", text)
+    when = m.group(1) if m else ""
+    rows = [("D10", st.get("LD_D10")), ("D50", st.get("LD_D50")), ("D90", st.get("LD_D90")),
+            ("Span", st.get("LD_span")), ("MV", st.get("LD_MV")), ("MA", st.get("LD_MA")), ("MN", st.get("LD_MN"))]
+    img = size_card(sample_name(path), when, rows)
+    note = ("Microtrac laser diffraction size export (.csv)" + (f", measured {when}" if when else "") +
+            ". Percentiles are by volume. A size export has no particle shapes, so it gets no shape classes.")
+    step(1.0, "done")
+    return _result(path, "size", img, img, [], st, note, settings, run=run_date(path, when))
+
+
+def size_card(batch, when, rows):
+    """Picture of the size numbers, shown in the viewer for a .csv size export."""
+    im = Image.new("RGB", (1400, 760), "white")
+    d = ImageDraw.Draw(im)
+    d.text((60, 40), f"{batch}: laser diffraction size", fill=(31, 78, 121), font=_font(46))
+    d.text((60, 108), "by volume" + (f", measured {when}" if when else ""), fill=(87, 96, 106), font=_font(28))
+    for k, (name, v) in enumerate(rows):
+        y = 190 + k * 76
+        d.text((80, y), name, fill=(87, 96, 106), font=_font(34))
+        txt = "n/a" if v is None else (f"{v:.2f}" if name == "Span" else f"{v:.1f} um")
+        d.text((420, y), txt, fill=(31, 35, 40), font=_font(38))
+    return np.array(im)
 
 
 # ---------------------------------------------------------------- dispatcher
@@ -492,7 +622,9 @@ def size_result(path, settings, step):
 def analyse(path, settings, step):
     """Result for one Microtrac file, or None when the file is an SEM image for the usual route."""
     ext = os.path.splitext(path)[1].lower()
-    if ext == ".xls":
+    if ext == ".csv" and is_size_csv(path):
+        return size_csv_result(path, settings, step)
+    if ext in (".xls", ".xlsx", ".csv"):
         return table_result(path, settings, step)
     if ext == ".pdf":
         kind = pdf_kind(path)

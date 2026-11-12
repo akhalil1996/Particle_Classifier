@@ -13,8 +13,8 @@ a = Analysis(
     hiddenimports=collect_submodules("skimage.filters") + collect_submodules("skimage.morphology")
     + collect_submodules("skimage.segmentation") + collect_submodules("skimage.measure")
     + collect_submodules("skimage.transform") + collect_submodules("reportlab.graphics.barcode")
-    + ["pypdfium2", "pypdfium2_raw"],
-    excludes=["torch", "matplotlib", "pandas", "tkinter", "IPython", "jupyter", "pytest",
+    + ["pypdfium2", "pypdfium2_raw", "matplotlib.backends.backend_agg", "openpyxl", "xlrd"],
+    excludes=["torch", "pandas", "tkinter", "IPython", "jupyter", "pytest",
               "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore", "PySide6.QtQuick",
               "PySide6.QtQml", "PySide6.QtMultimedia", "PySide6.QtPdf", "PySide6.QtCharts"],
     noarchive=False,

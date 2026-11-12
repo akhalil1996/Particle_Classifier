@@ -14,9 +14,10 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, Tab
 from reportlab.graphics.shapes import Drawing, String
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 
-from . import __version__, APP_NAME
+from . import __version__, APP_NAME, COPYRIGHT
 from .analysis import (CAULI_RGB, DENSE_RGB, CAULI_SOFT_RGB, DENSE_SOFT_RGB, SHAPE_RGB, SHAPE_NAMES, FRAME_RGB,
-                       summarise_classification, summarise_morphology)
+                       summarise_classification, summarise_morphology, batch_table)
+from .resources import resource
 
 ACCENT = colors.HexColor("#1F4E79")
 _ss = getSampleStyleSheet()
@@ -47,9 +48,9 @@ def _f(v, d=1, unit=""):
 
 def _img(arr, width_mm):
     im = Image.open(io.BytesIO(arr)) if isinstance(arr, (bytes, bytearray)) else Image.fromarray(arr)
-    im.thumbnail((1400, 1400))
+    im.thumbnail((1200, 1200))
     buf = io.BytesIO()
-    im.save(buf, "JPEG", quality=85)
+    im.convert("RGB").save(buf, "JPEG", quality=80)
     buf.seek(0)
     w = width_mm * mm
     return RLImage(buf, width=w, height=w * im.height / im.width)
@@ -107,8 +108,37 @@ def _footer(canvas, doc):
     canvas.setFont("Helvetica", 7)
     canvas.setFillColor(colors.HexColor("#777777"))
     canvas.drawString(15 * mm, 10 * mm, f"{APP_NAME} {__version__}  |  {doc.title}")
+    canvas.drawCentredString(105 * mm, 10 * mm, COPYRIGHT)
     canvas.drawRightString(195 * mm, 10 * mm, f"page {doc.page}")
     canvas.restoreState()
+
+
+def _logo(name, height_mm):
+    import os
+    p = resource("assets", name)
+    if not os.path.exists(p):
+        return Spacer(1, height_mm * mm)
+    im = Image.open(p)
+    if im.mode in ("RGBA", "LA", "P"):
+        bg = Image.new("RGB", im.size, "white")
+        bg.paste(im.convert("RGBA"), mask=im.convert("RGBA").split()[-1])
+        im = bg
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    buf.seek(0)
+    h = height_mm * mm
+    return RLImage(buf, width=h * im.width / im.height, height=h)
+
+
+def _letterhead():
+    """McGill University and P2[AM]2 logos across the top of the first page."""
+    t = Table([[_logo("mcgill_logo.png", 11), _logo("p2am2_logo.png", 11)]], colWidths=[90 * mm, 90 * mm],
+              hAlign="LEFT")
+    t.setStyle(TableStyle([("ALIGN", (0, 0), (0, 0), "LEFT"), ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                           ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                           ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                           ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#C00000"))]))
+    return t
 
 
 def _validated_text(v):
@@ -162,7 +192,8 @@ def _microtrac_section(r):
     """Page for one Microtrac file: particle report (silhouettes), particle table or size report."""
     st, src = r["stats"], r["source"]
     out = [Paragraph(_plain(r["name"]), H2),
-           Paragraph(f"Sample <b>{_plain(r['sample'])}</b>", SMALL), Spacer(1, 2 * mm)]
+           Paragraph(f"Sample <b>{_plain(r.get('label', r['sample']))}</b> &nbsp; | &nbsp; "
+                     f"{_plain(r['path'])}", SMALL), Spacer(1, 2 * mm)]
     if src == "gallery":
         imgs = Table([[_img(r["original"], 88), _img(r["analysed"], 88)],
                       [Paragraph("Particles as printed in the report", SMALL),
@@ -252,6 +283,57 @@ def _image_section(r):
     return out
 
 
+def _morphology_summary(results, single=False):
+    from .figures import figures
+    out = []
+    summ = summarise_morphology(results)
+    if not single:
+        bt = batch_table(results)
+        has_ld = any("LD_D50" in b for b in bt)
+        rows = [["Sample", "Shapes from", "Particles", "C5 num %", "C5 vol %", "C5 vol % 30-100"] +
+                (["D10 um", "D50 um", "D90 um"] if has_ld else [])]
+        src = {"table": "MT table", "gallery": "MT report", "sem": "SEM"}
+        for b in bt:
+            shp = b.get("shape_source")
+            num_only = shp == "gallery"
+            rows.append([_plain(b["sample"]), src.get(shp, "-"), b.get("n_counted", "-") if shp else "-",
+                         _f(b.get("num_pct_C5")) if shp else "-",
+                         "-" if num_only or not shp else _f(b.get("vol_pct_C5")),
+                         "-" if num_only or not shp else _f(b.get("band_vol_pct_C5"))] +
+                        ([_f(b.get("LD_D10")), _f(b.get("LD_D50")), _f(b.get("LD_D90"))] if has_ld else []))
+        w = [38 * mm, 19 * mm, 16 * mm, 16 * mm, 16 * mm, 25 * mm] + ([16 * mm] * 3 if has_ld else [])
+        scale = 180 * mm / sum(w)
+        out.append(_table(rows, [x * scale for x in w]))
+        out.append(Paragraph("Shapes from: the source of the shape classes for that sample, in this order of "
+                             "preference: the Microtrac particle table (every particle, by number and volume), the "
+                             "Microtrac particle report (the particles it prints, by number only), SEM images. "
+                             "D10, D50 and D90 are laser diffraction sizes by volume. When a batch was measured on "
+                             "more than one day, each day is its own sample, named with the date.", SMALL))
+        sem_rows = [x for x in summ if x["source"] == "sem"]
+        if sem_rows and any(x["source"] in ("table", "gallery") for x in summ):
+            out.append(Paragraph("SEM shares are reported per image and in the figures only where no Microtrac "
+                                 "data was opened; SEM outlines are not on the Microtrac scale.", SMALL))
+    figs = figures(results, summ)
+    have = [f for f in figs if f[2]]
+    if have:
+        out.append(PageBreak())
+        out.append(Paragraph("Figures", H2))
+        for n, title, png, _ in figs:
+            if not png:
+                continue
+            im = Image.open(io.BytesIO(png))
+            w = 180 * mm
+            h = w * im.height / im.width
+            if h > 210 * mm:
+                w, h = w * 210 * mm / h, 210 * mm
+            out.append(KeepTogether([Paragraph(f"<b>Figure {n}.</b> {_plain(title)}", BODY), Spacer(1, 1 * mm),
+                                     RLImage(io.BytesIO(png), width=w, height=h), Spacer(1, 4 * mm)]))
+        miss = [f"Figure {n} ({title.lower()}) {need}" for n, title, png, need in figs if not png]
+        if miss:
+            out.append(Paragraph("Not drawn for these files: " + "; ".join(_plain(m) for m in miss) + ".", SMALL))
+    return out
+
+
 def _gallery_text():
     from .microtrac import load_calibration
     c = load_calibration()[2]
@@ -272,12 +354,15 @@ def build_report(results, path, title=None):
     title = title or f"{what} report"
     doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
                             topMargin=14 * mm, bottomMargin=16 * mm, title=title, author=APP_NAME)
+    if kind == "morphology":
+        from .analysis import sample_labels
+        sample_labels(results)
     sem = [r for r in results if r.get("source", "sem") == "sem"]
     mt = [r for r in results if r.get("source", "sem") != "sem"]
     what_n = "image" if not mt else "file"
-    el = [Paragraph(title, H1),
+    el = [_letterhead(), Spacer(1, 4 * mm), Paragraph(title, H1),
           Paragraph(f"{APP_NAME} {__version__} &nbsp; | &nbsp; {dt.datetime.now():%Y-%m-%d %H:%M} &nbsp; | &nbsp; "
-                    f"{len(results)} {what_n}{'s' if len(results) > 1 else ''}", SMALL),
+                    f"{len(results)} {what_n}{'s' if len(results) > 1 else ''} &nbsp; | &nbsp; {COPYRIGHT}", SMALL),
           Spacer(1, 3 * mm)]
 
     if kind == "classification":
@@ -342,39 +427,9 @@ def build_report(results, path, title=None):
                              _f(st["cauliflower_area_pct"])])
             el.append(_table(rows, [58 * mm, 30 * mm, 20 * mm, 22 * mm, 18 * mm, 30 * mm]))
         else:
-            summ = summarise_morphology(results)
-            shapes = [x for x in summ if x["source"] != "size"]
-            sizes = [x for x in summ if x["source"] == "size"]
-            if shapes:
-                rows = [["Sample", "Files", "Particles", "Basis"] + [f"C{k} %" for k in range(1, 6)] +
-                        ["C5 band vol%", "D50 um"]]
-                for x in shapes:
-                    num = x["source"] == "gallery"
-                    key = "num_pct_C" if num else "vol_pct_C"
-                    rows.append([_plain(x["sample"]), x["fields"], x.get("n_counted", 0), "number" if num else "volume"] +
-                                [_f(x.get(f"{key}{k}")) for k in range(1, 6)] +
-                                ["-" if num else _f(x.get("band_vol_pct_C5")), "-" if num else _f(x.get("D50_num_um"), 0)])
-                el.append(_table(rows, [42 * mm, 11 * mm, 16 * mm, 15 * mm] + [13 * mm] * 5 + [19 * mm, 13 * mm]))
-                el.append(Paragraph("Shares pool all classified particles of a sample's files. Basis: by volume for "
-                                    "SEM fields and Microtrac tables, by number for Microtrac report silhouettes, "
-                                    "which carry no sizes. Band = particles of 30-100 um area-equivalent diameter.",
-                                    SMALL))
-                vol = [x for x in shapes if x["source"] != "gallery"]
-                if vol:
-                    el.append(_bar([_plain(x["sample"]) for x in vol], [x.get("band_vol_pct_C5", float("nan")) for x in vol],
-                                   "C5 (branched / agglomerate), % of volume in the 30-100 um band", SHAPE_RGB[4]))
-                gal = [x for x in shapes if x["source"] == "gallery"]
-                if gal and (len(gal) > 1 or not vol):
-                    el.append(_bar([_plain(x["sample"]) for x in gal], [x.get("num_pct_C5", float("nan")) for x in gal],
-                                   "C5 (branched / agglomerate), % by number of the particles shown in the report",
-                                   SHAPE_RGB[4]))
-            if sizes:
-                el.append(Paragraph("Size reports (laser diffraction, by volume)", H2))
-                rows = [["Sample", "D10 um", "D50 um", "D90 um", "Span", "MV um"]]
-                for x in sizes:
-                    rows.append([_plain(x["sample"]), _f(x.get("LD_D10")), _f(x.get("LD_D50")), _f(x.get("LD_D90")),
-                                 _f(x.get("LD_span"), 2), _f(x.get("LD_MV"))])
-                el.append(_table(rows, [60 * mm, 22 * mm, 22 * mm, 22 * mm, 22 * mm, 22 * mm]))
+            el.extend(_morphology_summary(results))
+    elif kind == "morphology":
+        el.extend(_morphology_summary(results, single=True))
     for r in results:
         el.append(PageBreak())
         el.extend(_image_section(r))

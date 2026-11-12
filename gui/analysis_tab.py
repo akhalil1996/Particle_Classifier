@@ -150,6 +150,9 @@ class AnalysisTab(QWidget):
         m = QMenu(self)
         m.addAction("Report for all analysed images", lambda: self.export_pdf(all_images=True))
         m.addAction("Report for the image shown", lambda: self.export_pdf(all_images=False))
+        if self.kind == "morphology":
+            m.addSeparator()
+            m.addAction("Figures as PNG files…", self.export_figures)
         self.btn_pdf.setMenu(m)
         self.btn_pdf.clicked.connect(lambda: self.export_pdf(all_images=True))
         self.btn_csv = QToolButton()
@@ -338,15 +341,17 @@ class AnalysisTab(QWidget):
         if self.kind == "classification":
             self.batch = make_table(["Sample", "Fields", "Cauli. area %", "95 % interval", "Field SD"])
         else:
-            self.batch = make_table(["Sample", "Files", "Particles", "C5 num %", "C5 vol %", "C5 vol % 30–100"])
+            self.batch = make_table(["Sample", "From", "C5 n %", "C5 v %", "C5 band", "D50"])
         L.addWidget(self.batch)
         self.batch_note_text = ("Samples are grouped by the part of the file name before “_x” "
                                 "(e.g. 384_x100_0031 → 384). Each sample pools all particles of its fields."
                                 + (" The 95 % interval shows how far the pooled value could move with other fields "
                                    "of the same stub; it needs at least 3 fields." if self.kind == "classification" else
-                                   " Microtrac (MT) files are grouped by their batch folder and kind. Report "
-                                   "silhouettes carry no sizes, so they give a share by number only; opening the PDF "
-                                   "and pictures of the same report counts its particles twice."))
+                                   " Microtrac files are grouped by their batch folder; a batch measured on two days "
+                                   "gets one row per day. “From” says where the shape classes come from: the "
+                                   "Microtrac table when there is one, else the report (by number only), else SEM. "
+                                   "C5 n % = share by number, C5 v % = by volume, C5 band = by volume in the "
+                                   "30–100 µm band. D50 is the laser diffraction median by volume, in µm."))
         self.batch_note = QLabel(self.batch_note_text)
         self.batch_note.setObjectName("muted")
         self.batch_note.setWordWrap(True)
@@ -373,11 +378,12 @@ class AnalysisTab(QWidget):
             title, filt = "Open SEM images", f"Images ({pats});;All files (*)"
         else:
             title = "Open SEM images or Microtrac files"
-            filt = (f"SEM images and Microtrac files ({pats} *.pdf *.xls);;Images ({pats});;"
-                    "Microtrac reports (*.pdf);;Microtrac particle tables (*.xls);;All files (*)")
+            filt = (f"SEM images and Microtrac files ({pats} *.pdf *.xls *.xlsx *.csv);;Images ({pats});;"
+                    "Microtrac reports (*.pdf);;Microtrac tables and size exports (*.xls *.xlsx *.csv);;All files (*)")
         files, _ = QFileDialog.getOpenFileNames(self, title, start, filt)
         if files:
             self.qs.setValue("last_dir", os.path.dirname(files[0]))
+            self.root_dir = os.path.dirname(files[0])
             self.load(sorted(files))
 
     def open_folder(self):
@@ -387,11 +393,13 @@ class AnalysisTab(QWidget):
                                              start)
         if d:
             self.qs.setValue("last_dir", d)
-            files = list_images(d, MORPH_EXT if morph else IMAGE_EXT)
+            files = list_images(d, MORPH_EXT if morph else IMAGE_EXT, recursive=morph)
             if not files:
                 QMessageBox.information(self, "Nothing to open", "That folder has no .tif, .png or .jpg images"
-                                        + (", and no .pdf or .xls Microtrac files." if morph else "."))
+                                        + (", and no .pdf, .xls, .xlsx or .csv Microtrac files, in it or in its "
+                                           "sub-folders." if morph else "."))
                 return
+            self.root_dir = d
             self.load(files)
 
     def load(self, files):
@@ -400,7 +408,8 @@ class AnalysisTab(QWidget):
         self.paths, self.results, self.errors = list(files), {}, {}
         self.list.clear()
         for f in files:
-            self.list.addItem(QListWidgetItem(os.path.splitext(os.path.basename(f))[0]))
+            it = QListWidgetItem(self._short(f))
+            self.list.addItem(it)
         self.list.setCurrentRow(0)
         self.run_all()
 
@@ -468,9 +477,30 @@ class AnalysisTab(QWidget):
         self.status.setText(msg)
         self._update_buttons()
 
+    def _short(self, path):
+        """List name: the file name, with the sub-folder it came from when a folder tree was opened."""
+        import re
+        base = os.path.basename(path)
+        name, ext = os.path.splitext(base)
+        low = name.lower()
+        if "(all particles)" in low:            # Microtrac exports carry the SOP name and a time stamp
+            m = re.search(r"viewerreport_page(\d+)", low)
+            name = (f"report page {m.group(1)}" if m else
+                    "particle table" if ext.lower() in (".xls", ".xlsx", ".csv") else "particle report") + ext.lower()
+        elif ext.lower() in (".pdf", ".xls", ".xlsx", ".csv"):
+            name = base
+        if len(name) > 34:
+            name = name[:16] + "…" + name[-15:]
+        root = getattr(self, "root_dir", None)
+        if root:
+            rel = os.path.dirname(os.path.relpath(path, root))
+            if rel and rel != ".":
+                name = f"{rel.replace(os.sep, ' / ')} / {name}"
+        return name
+
     def _label_item(self, i):
         it = self.list.item(i)
-        name = os.path.splitext(os.path.basename(self.paths[i]))[0]
+        name = self._short(self.paths[i])
         if i in self.results:
             st = self.results[i]["stats"]
             src = self.results[i].get("source", "sem")
@@ -655,18 +685,15 @@ class AnalysisTab(QWidget):
                      f"{fmt(s['ci_low_pct'])} – {fmt(s['ci_high_pct'])}" if s["fields"] >= 3 else "–",
                      fmt(s["field_sd_pct"])] for s in summarise_classification(res)]
         else:
-            rows, sizes = [], []
-            for s in summarise_morphology(res):
-                if s["source"] == "size":
-                    sizes.append(f"{s['sample'].split(' · ')[0]}: D10 {fmt(s.get('LD_D10'), 0)}, "
-                                 f"D50 {fmt(s.get('LD_D50'), 0)}, D90 {fmt(s.get('LD_D90'), 0)} µm")
-                    continue
-                vol = (lambda v: "–") if s["source"] == "gallery" else fmt
-                rows.append([s["sample"], s["fields"], s.get("n_counted", 0), fmt(s.get("num_pct_C5")),
-                             vol(s.get("vol_pct_C5")), vol(s.get("band_vol_pct_C5"))])
-            self.batch.setVisible(bool(rows))
-            self.batch_note.setText(self.batch_note_text + ("<br><b>Size reports (laser diffraction, by volume):</b> "
-                                                            + "; ".join(sizes) + "." if sizes else ""))
+            from cauliquant.analysis import batch_table
+            src = {"table": "table", "gallery": "report", "sem": "SEM"}
+            rows = []
+            for b in batch_table(res):
+                shp = b.get("shape_source")
+                vol = (lambda v: "–") if shp in ("gallery", None) else fmt
+                rows.append([b["sample"], src.get(shp, "size only"),
+                             fmt(b.get("num_pct_C5")) if shp else "–", vol(b.get("vol_pct_C5")),
+                             vol(b.get("band_vol_pct_C5")), fmt(b.get("LD_D50"), 0)])
         fill_table(self.batch, rows)
 
     # ---------------------------------------------------------------- export
@@ -696,6 +723,28 @@ class AnalysisTab(QWidget):
             self.status.setText(f"Report saved: {f}")
         except Exception as e:
             QMessageBox.critical(self, "Report failed", f"{type(e).__name__}: {e}")
+
+    def export_figures(self):
+        res = self._chosen(True)
+        if not res:
+            QMessageBox.information(self, "Nothing to export", "Analyse some files first.")
+            return
+        start = self.qs.value("last_out", self.qs.value("last_dir", os.path.expanduser("~")))
+        d = QFileDialog.getExistingDirectory(self, "Folder for the figures", start)
+        if not d:
+            return
+        from cauliquant.analysis import summarise_morphology
+        from cauliquant.figures import figures
+        self.status.setText("Drawing figures…")
+        self.repaint()
+        saved = []
+        for n, title, png, _ in figures(res, summarise_morphology(res)):
+            if png:
+                f = os.path.join(d, f"{n:02d}_{title.lower().replace(' ', '_')}.png")
+                open(f, "wb").write(png)
+                saved.append(f)
+        self.qs.setValue("last_out", d)
+        self.status.setText(f"{len(saved)} figures saved in {d}" if saved else "No figure could be drawn from these files")
 
     def export_table(self, per_particle):
         res = self._chosen(True)

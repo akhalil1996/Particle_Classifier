@@ -17,7 +17,7 @@ from skimage import measure
 from .resources import SHAPE_MODEL as MODEL
 FEAT = ["Circularity", "Solidity", "Convexity", "W/L Aspect Ratio", "Extent"]
 SHORT = ["C1", "C2", "C3", "C4", "C5"]
-SHAPE_RGB = [(76, 120, 168), (114, 183, 178), (238, 202, 59), (178, 121, 162), (228, 87, 86)]
+SHAPE_RGB = [(42, 120, 214), (235, 104, 52), (27, 175, 122), (237, 161, 0), (232, 123, 164)]   # as in the study figures
 SHAPE_NAMES = ["C1 compact", "C2 elongated smooth", "C3 blocky rough", "C4 elongated concave",
                "C5 branched / agglomerate"]
 BAND = (30.0, 100.0)          # um, area-equivalent diameter: the band shares are reported for

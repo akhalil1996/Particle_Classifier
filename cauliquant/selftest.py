@@ -87,7 +87,31 @@ def run(out_dir=None, log=print):
     log(f"Microtrac report: picture {rp['stats']['n_counted']} silhouettes, PDF {rd['stats']['n_counted']} silhouettes")
     assert rp["source"] == "gallery" and rd["source"] == "gallery"
     assert rp["stats"]["n_counted"] == 40 and rd["stats"]["n_counted"] == 40
-    p = build_report([rm, rp, rd], os.path.join(out_dir, "selftest_microtrac.pdf"))
+    csvp = os.path.join(out_dir, "S1.csv")
+    with open(csvp, "w") as fh:
+        fh.write(",, Title: ,-RTIT-Ti, Date: ,2026-05-06, Summary Data ,,,MV(um):,178.5,MN(um):,77.04,MA(um):,141.0,"
+                 "SD:,83.33,Percentiles,,,%Tile,Size(um),10,82.82,50,168.3,90,298.8,95,321.3 Size Percent ,,\n")
+    rs = morphology_input(csvp, s)
+    assert rs["source"] == "size" and abs(rs["stats"]["LD_D50"] - 168.3) < 1e-6
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active
+    feats = ["Id", "Da", "Volume", "Circularity", "Solidity", "Convexity", "W/L Aspect Ratio", "Extent", "Transparency"]
+    ws.append(feats)
+    rng = np.random.default_rng(0)
+    for i in range(300):
+        da = rng.uniform(12, 150)
+        ws.append([i + 1, da, np.pi / 6 * da ** 3] + list(rng.uniform([0.4, 0.8, 0.9, 0.3, 0.5, 0.15],
+                                                                       [0.95, 1.0, 1.0, 0.95, 0.85, 0.25])))
+    xp = os.path.join(out_dir, "S1_table.xlsx")
+    wb.save(xp)
+    rt = morphology_input(xp, s)
+    assert rt["source"] == "table" and rt["stats"]["n_counted"] == 300
+    from .figures import figures
+    from .analysis import summarise_morphology
+    figs = figures([rm, rp, rd, rs, rt], summarise_morphology([rm, rp, rd, rs, rt]))
+    log("figures drawn: " + ", ".join(str(n) for n, _, png, _ in figs if png))
+    assert sum(1 for f in figs if f[2]) >= 4
+    p = build_report([rm, rp, rd, rs, rt], os.path.join(out_dir, "selftest_microtrac.pdf"))
     assert os.path.getsize(p) > 10000
     log(f"reports written to {out_dir}")
     return out_dir

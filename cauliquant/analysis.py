@@ -50,18 +50,48 @@ class Settings:
         return d
 
 
-MORPH_EXT = IMAGE_EXT + (".pdf", ".xls")      # the morphology tab also reads Microtrac exports
+MORPH_EXT = IMAGE_EXT + (".pdf", ".xls", ".xlsx", ".csv")      # the morphology tab also reads Microtrac exports
 
 
-def list_images(folder, ext=IMAGE_EXT):
-    return sorted(os.path.join(folder, f) for f in os.listdir(folder)
-                  if f.lower().endswith(ext) and not f.startswith(".") and not f.startswith("~$"))
+def _natural(p):
+    import re
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", p)]
+
+
+def list_images(folder, ext=IMAGE_EXT, recursive=False):
+    """Files of a folder with one of the extensions, sorted naturally; with recursive=True also every sub-folder.
+
+    Pictures of Microtrac report pages are left out when the report PDF they were made from is in the list too,
+    so its particles are not counted twice.
+    """
+    found = []
+    if recursive:
+        for root, dirs, files in os.walk(folder):
+            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+            found += [os.path.join(root, f) for f in files]
+    else:
+        found = [os.path.join(folder, f) for f in os.listdir(folder)]
+    found = [f for f in found if os.path.isfile(f) and f.lower().endswith(ext)
+             and not os.path.basename(f).startswith((".", "~$"))]
+    stems = {os.path.splitext(os.path.basename(f))[0].lower() for f in found if f.lower().endswith(".pdf")}
+    keep = []
+    for f in found:
+        st = os.path.splitext(os.path.basename(f))[0].lower()
+        if f.lower().endswith(IMAGE_EXT) and "_viewerreport" in st and st.split("_viewerreport")[0] in stems:
+            continue
+        keep.append(f)
+    return sorted(keep, key=lambda f: _natural(os.path.relpath(f, folder)))
 
 
 def sample_of(name):
-    """Sample name: the part of the image name before _x<magnification>, e.g. 384_x100_0031 -> 384."""
+    """Sample name: the part of the image name before _x<magnification>, e.g. 384_x100_0031 -> 384,
+    or, without one, the name less a trailing field number, e.g. 381_0016 -> 381."""
+    import re
     i = name.lower().find("_x")
-    return name[:i] if i > 0 else name
+    if i > 0:
+        return name[:i]
+    m = re.match(r"(.+?)[_ -]\d{3,}$", name)
+    return m.group(1) if m else name
 
 
 # ---------------------------------------------------------------- image input
@@ -257,7 +287,15 @@ def morphology_input(path, s: Settings, progress=None):
     from . import microtrac
     step = progress or (lambda f, msg="": None)
     r = microtrac.analyse(path, s.as_dict(), step)
-    return r if r is not None else morphology_image(path, s, progress)
+    if r is not None:
+        return r
+    rgb = np.asarray(Image.open(path).convert("RGB"), np.int16)
+    colour = float(((rgb.max(-1) - rgb.min(-1)) > 40).mean())
+    white = float((rgb.min(-1) > 235).mean())
+    if colour > 0.002 or white > 0.6:
+        raise ValueError("Not an SEM micrograph (it is in colour or mostly white) and not a page of a Microtrac "
+                         "particle report.")
+    return morphology_image(path, s, progress)
 
 
 def morphology_image(path, s: Settings, progress=None):
@@ -332,24 +370,63 @@ def summarise_classification(results):
     return out
 
 
+SOURCE_ORDER = {"table": 0, "gallery": 1, "sem": 2, "size": 3}
+SOURCE_NAME = {"sem": "SEM images", "gallery": "Microtrac report", "table": "Microtrac table", "size": "Size (LD)"}
+
+
+def sample_labels(results):
+    """Name each result's sample for the summary: the batch, with the measurement date added when the same batch
+    was measured on more than one day (e.g. 382 (2026-05-06) and 382 (2026-11-06))."""
+    runs = {}
+    for r in results:
+        runs.setdefault(r["sample"], set()).add(r.get("run", ""))
+    for r in results:
+        many = len(runs[r["sample"]] - {""}) > 1
+        r["label"] = f"{r['sample']} ({r['run']})" if many and r.get("run") else r["sample"]
+    return results
+
+
 def summarise_morphology(results):
     """Per sample and source: C1-C5 shares from all its files' particles pooled.
 
     SEM fields and Microtrac tables carry sizes, so they give shares by number, by volume and in the band.
     Microtrac report silhouettes carry none and give shares by number. Size reports have no particles and
-    are returned with their percentiles only.
+    are returned with their percentiles (the mean of the reports when there are several).
     """
+    sample_labels(results)
     by = {}
     for r in results:
-        by.setdefault((r["sample"], r.get("source", "sem")), []).append(r)
+        by.setdefault((r["label"], r.get("source", "sem")), []).append(r)
     out = []
-    for (s, src), rs in by.items():
+    for (s, src), rs in sorted(by.items(), key=lambda kv: (_natural(kv[0][0]), SOURCE_ORDER.get(kv[0][1], 9))):
         rows = [p for r in rs for p in r["rows"]]
         if src == "size":
-            st = {k: v for k, v in rs[-1]["stats"].items()}
+            keys = {k for r in rs for k in r["stats"] if k.startswith("LD_")}
+            st = {k: float(np.nanmean([r["stats"].get(k, np.nan) for r in rs])) for k in keys}
+            st["n_counted"] = 0
         elif src == "gallery":
             st = number_stats(rows)
         else:
             st = shape_stats(rows)
-        out.append(dict(sample=s, source=src, fields=len(rs), pages=sum(r.get("pages", 1) for r in rs), **st))
+        out.append(dict(sample=s, batch=rs[0]["sample"], run=rs[0].get("run", ""), source=src,
+                        source_name=SOURCE_NAME.get(src, src), fields=len(rs),
+                        pages=sum(r.get("pages", 1) for r in rs), **st))
     return out
+
+
+def batch_table(results):
+    """One row per sample with what each source gives: Microtrac table shares (or report shares, or SEM shares)
+    and the laser diffraction percentiles."""
+    rows = {}
+    for s in summarise_morphology(results):
+        row = rows.setdefault(s["sample"], {"sample": s["sample"], "sources": []})
+        row["sources"].append(s["source"])
+        if s["source"] == "size":
+            row.update({k: v for k, v in s.items() if k.startswith("LD_")})
+            continue
+        if "shape_source" in row and SOURCE_ORDER[s["source"]] >= SOURCE_ORDER[row["shape_source"]]:
+            continue
+        row["shape_source"] = s["source"]
+        row.update({k: v for k, v in s.items() if k.startswith(("num_pct", "vol_pct", "band_vol_pct", "median_"))
+                    or k in ("n_counted", "n_band", "D50_num_um")})
+    return sorted(rows.values(), key=lambda r: _natural(r["sample"]))

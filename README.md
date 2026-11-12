@@ -1,5 +1,7 @@
 # CauliQuant
 
+© 2026 McGill University. All rights reserved. Developed at McGill University by the Powder Processing and Additive Manufacturing of Advanced Materials group (P²[AM]²).
+
 Desktop software that measures porous **cauliflower** agglomerates and particle shape in titanium powder from SEM micrographs.
 
 | Tab | What it does |
@@ -20,14 +22,27 @@ Secondary-electron images at x100, ideally 2560 × 1920 px (0.496 µm/px), parti
 
 ## Microtrac files (morphology tab)
 
-Open them with **Open files…** or **Open folder…** next to, or instead of, SEM images. Each file is recognised by its content:
+Open them with **Open files…** or **Open folder…** next to, or instead of, SEM images. **Open folder…** in this tab reads the folder and every sub-folder, so a date folder with one sub-folder per batch (`6-11-2026/382/…`) can be opened in one go; pictures of report pages are skipped when the report PDF they came from is in the same tree. Each file is recognised by its content:
 
 | File | What the tab reads | Shares |
 |---|---|---|
 | Particle report, `…(All particles).pdf` (SYNC viewer, "Particles") | every printed silhouette, measured again and given the C1-C5 class | by number, of the particles shown |
 | Pictures of report pages (`…ViewerReport_page1.jpg`, PNG) | same, from the page picture | by number, of the particles shown |
-| Particle table, `…(All particles).xls` | Microtrac's own descriptors for every particle | by number, by volume, and by volume in the 30-100 µm band |
-| Size report, `<batch>.pdf` ("Particle Size Analysis") | D10, D50, D90, span, MV / MA / MN | none (no shapes) |
+| Particle table, `…(All particles).xls`, or the same table saved as `.xlsx` or `.csv` | Microtrac's own descriptors for every particle | by number, by volume, and by volume in the 30-100 µm band |
+| Size report, `<batch>.pdf` ("Particle Size Analysis") or `<batch>.csv` | D10, D50, D90, span, MV / MA / MN | none (no shapes) |
+
+When a batch was measured on more than one day (the date comes from the export's time stamp), each day is kept as its own sample, e.g. `382 (2026-05-06)` and `382 (2026-11-06)`.
+
+### Morphology report figures
+
+The PDF report of the morphology tab draws these figures from the files opened (each is left out when its files were not opened); **Export PDF report → Figures as PNG files…** saves them on their own:
+
+1. Example particles of each shape class (from the report silhouettes)
+2. Shape class against particle size (Microtrac table particles)
+3. Laser diffraction D10 / D50 / D90 by batch, one line per measurement day
+4. Shape class shares per sample, by number and by volume
+5. Shape at fixed size (30-100 µm): median and 95 % interval of each descriptor per batch
+6. Spearman correlation between the Microtrac descriptors
 
 The report prints each particle scaled to the same small cell, with no size, and only the first particles of the viewer list (about 1,300 of several thousand, the widest when sorted by FWidth), so its shares are by number of the particles shown and do not compare with shares by volume. The particle table is the complete record and should be preferred when it is available. A silhouette's outline is a little longer than Microtrac's own, so a linear correction per descriptor (`models/microtrac_gallery.json`, refit with `backend/fit_gallery_calibration.py --pair report.pdf table.xls …`) puts the silhouettes on the Microtrac scale: fitted on three reports with their tables, 93 % of particles of a report left out of the fit got the same class as from the table, and class shares differed by at most 1.7 points. Pictures should be page exports or straight scans; a phone photo at an angle distorts the shapes. Microtrac exports are named after the SOP and a time stamp, so their batch is taken from the folder they sit in (`382/H0131…pdf` → `382`).
 
