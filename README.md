@@ -63,7 +63,9 @@ gui/                    the window (PySide6)
 cauliquant/             analysis package: segmentation, features, counting frame, U-Net, shape classes, reports
 models/                 cauliflower_unet.onnx (network), cauliflower_unet.json (its model card: particle
                         classifier, validated SEM settings, measured error), shape_classes_k5.json (C1-C5 model),
-                        microtrac_gallery.json (silhouette correction for Microtrac particle reports)
+                        microtrac_gallery.json (silhouette correction for Microtrac particle reports),
+                        classifier_base.csv (reference particles the classifier is fitted on),
+                        classifier_user.csv (particles judged in the Developer tab and published)
 backend/                command-line tools, not part of the installer:
   classify_folder.py      batch classification folder A -> folder B (masks, overlays, summary.csv)
   train.py                train the U-Net on labelled A/B pairs, with the training monitor
@@ -91,7 +93,19 @@ The back-end tools also need `pip install -r requirements-backend.txt` (adds PyT
 
 The model has two parts: the U-Net (`.onnx`) and its model card (`.json` with the same name), which holds the particle classifier, the SEM settings it was validated on and its measured error.
 
-**New labelled fields, same network** (the usual case):
+**In the app, Developer tab** (password protected):
+
+1. Open SEM photos. Each is analysed with the current classifier.
+2. Left-click a particle to switch it between cauliflower and dense; right-click to leave it out of training.
+   Particles left unchanged count as confirmed (this can be switched off).
+3. *Submit and retrain* stores the judged particles and refits the classifier on the reference particles
+   (`models/classifier_base.csv`) plus every particle judged so far. The refined classifier is saved in the
+   user folder (`%APPDATA%\CauliQuant`) and the classification tab uses it at once. The U-Net is not changed.
+4. *Publish to GitHub* commits the refined model card and the judged particles to this repository and raises the
+   version, which builds a new installer carrying them. It needs a fine-grained GitHub token with
+   Contents: read and write on this repository.
+
+**New labelled fields, same network, from the command line:**
 
 1. `python backend/fit_classifier.py --raw <images> --labels <label folder> --model models/cauliflower_unet.onnx`
    It scores every sample with a classifier fitted on the other samples, prints the error, and rewrites the card.

@@ -15,3 +15,16 @@ def resource(*parts):
 
 DEFAULT_UNET = resource("models", "cauliflower_unet.onnx")
 SHAPE_MODEL = resource("models", "shape_classes_k5.json")
+
+
+def user_dir():
+    """Per-user folder for files the app writes (Windows: %APPDATA%\\CauliQuant)."""
+    root = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+    d = os.path.join(root, "CauliQuant")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def local_card_path():
+    """Classifier refined in the developer tab on this PC (used in place of the shipped one)."""
+    return os.path.join(user_dir(), "cauliflower_unet.json")

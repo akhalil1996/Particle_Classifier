@@ -11,6 +11,7 @@ from cauliquant import __version__, APP_NAME, COPYRIGHT, GROUP
 from cauliquant.resources import DEFAULT_UNET, resource
 from cauliquant.classifier import load_card
 from .analysis_tab import AnalysisTab
+from .developer_tab import DeveloperTab
 
 ABOUT_TEXT = ("Developed at McGill University, " + GROUP + ", for quality control of titanium powder produced by "
               "molten salt electrolysis.")
@@ -181,7 +182,11 @@ class HomeTab(QScrollArea):
         c = load_card(p) if os.path.exists(p) else {}
         v = c.get("validated", {})
         if c.get("classifier"):
-            extra = (f"<br>{c.get('name', '')}. Validated for x{v.get('magnification', 100):.0f}, {v.get('kv', 15):.0f} kV, "
+            rv = int(c.get("revision", 0))
+            name = c.get("name", "") + (f", classifier revision {rv}" if rv else "")
+            if rv and c.get("refined") and rv > int(load_card(p, refined=False).get("revision", 0)):
+                name += " (retrained on this PC)"
+            extra = (f"<br>{name}. Validated for x{v.get('magnification', 100):.0f}, {v.get('kv', 15):.0f} kV, "
                      f"spot intensity {v.get('spot', 50):.0f}, scan {v.get('scan', '')}, {v.get('um_px', 0.496):.3f} µm/px.")
         else:
             extra = ("<br><span style='color:#B54708'>No model card next to this file: the raw network score is used "
@@ -206,6 +211,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.home, "Home")
         self.tabs.addTab(self.tab_class, "Particle classification")
         self.tabs.addTab(self.tab_morph, "Morphology profiling")
+        self.tab_dev = DeveloperTab(self)
+        self.tabs.addTab(self.tab_dev, "Developer")
+        self.tabs.currentChanged.connect(lambda i: self.home.update_model() if self.tabs.widget(i) is self.home else None)
         self.setCentralWidget(self.tabs)
         self.statusBar().showMessage(COPYRIGHT)
         self.resize(1440, 900)
@@ -268,4 +276,6 @@ class MainWindow(QMainWindow):
                 t.worker.cancel()
             if t.thread:
                 t.thread.wait(30000)
+        if self.tab_dev.thread:
+            self.tab_dev.thread.wait(30000)
         super().closeEvent(e)

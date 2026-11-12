@@ -31,10 +31,41 @@ def card_path(model_path):
     return os.path.splitext(model_path)[0] + ".json"
 
 
-def load_card(model_path):
-    """Model card of a network file; defaults (and no classifier) when there is none."""
+def _read_json(p):
+    try:
+        return json.load(open(p, encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+
+
+def _refined(p):
+    """The developer-tab card of this PC, when it refines the shipped card p (same network, newer revision)."""
+    from .resources import DEFAULT_UNET, local_card_path
+    if os.path.normcase(os.path.abspath(p)) != os.path.normcase(os.path.abspath(card_path(DEFAULT_UNET))):
+        return None
+    loc = local_card_path()
+    if not os.path.exists(loc):
+        return None
+    mine, shipped = _read_json(loc), _read_json(p) or {}
+    if not mine or not mine.get("classifier"):
+        return None
+    if mine.get("network", {}).get("sha256") != shipped.get("network", {}).get("sha256"):
+        return None
+    if int(mine.get("revision", 0)) <= int(shipped.get("revision", 0)):
+        return None
+    return loc
+
+
+def load_card(model_path, refined=True):
+    """Model card of a network file; defaults (and no classifier) when there is none.
+
+    With refined=True, a classifier refined in the developer tab on this PC replaces
+    the shipped one (same network, newer revision).
+    """
     card = dict(DEFAULT_CARD)
     p = card_path(model_path or "")
+    if refined and os.path.exists(p):
+        p = _refined(p) or p
     if os.path.exists(p):
         try:
             got = json.load(open(p, encoding="utf-8"))

@@ -113,5 +113,27 @@ def run(out_dir=None, log=print):
     assert sum(1 for f in figs if f[2]) >= 4
     p = build_report([rm, rp, rd, rs, rt], os.path.join(out_dir, "selftest_microtrac.pdf"))
     assert os.path.getsize(p) > 10000
+    # developer tab: refit reproduces the shipped classifier, and a submitted photo gives a refined card
+    from . import trainer
+    from .classifier import load_card
+    from .resources import DEFAULT_UNET
+    Xb, yb, _, _, _ = trainer.training_set()
+    ship = load_card(DEFAULT_UNET, refined=False)["classifier"]
+    diff = float(np.abs(trainer.predict(trainer.fit_logistic(Xb, yb), Xb) - trainer.predict(ship, Xb)).max())
+    log(f"classifier refit: {len(yb)} reference particles, largest probability difference to shipped {diff:.4f}")
+    assert len(yb) > 1000 and diff < 0.02
+    old = os.environ.get("APPDATA")
+    os.environ["APPDATA"] = out_dir
+    try:
+        judged = {r["id"]: ("dense" if r["class"] == "cauliflower" else "cauliflower") for r in rc["rows"] if r["counted"]}
+        rep = trainer.submit(rc, judged, img, DEFAULT_UNET, 2.0)
+        assert rep["revision"] == int(load_card(DEFAULT_UNET, refined=False).get("revision", 0)) + 1
+        assert load_card(DEFAULT_UNET).get("revision") == rep["revision"]
+        log(f"developer retrain: revision {rep['revision']} from {rep['your_particles']} judged particles")
+    finally:
+        if old is None:
+            os.environ.pop("APPDATA", None)
+        else:
+            os.environ["APPDATA"] = old
     log(f"reports written to {out_dir}")
     return out_dir

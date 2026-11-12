@@ -1,5 +1,5 @@
 """CauliQuant: SEM quantification of porous cauliflower agglomerates in titanium powder."""
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 APP_NAME = "CauliQuant"
 ORGANISATION = "McGill University"
 GROUP = "Powder Processing and Additive Manufacturing of Advanced Materials (P²[AM]²)"

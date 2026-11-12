@@ -1,6 +1,7 @@
 {
  "name": "CauliQuant classification model 2026-11",
  "created": "2026-11-11",
+ "revision": 0,
  "network": {
   "file": "cauliflower_unet.onnx",
   "sha256": "fdcad08714d0bd381fd0d5a75fd6ab810257a7d13c9933e7fac5ba768988a625",

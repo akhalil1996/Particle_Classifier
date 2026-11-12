@@ -179,7 +179,7 @@ def _info(p):
     return d
 
 
-def classify_image(path, s: Settings, progress=None):
+def classify_image(path, s: Settings, progress=None, keep_labels=False):
     """Cauliflower vs dense for one SEM image. Returns a result dict (images as RGB arrays).
 
     Every particle gets a cauliflower probability. The headline result is the
@@ -271,10 +271,11 @@ def classify_image(path, s: Settings, progress=None):
         warnings.append("This model file has no model card: the raw network score is used and the result is not "
                         "validated.")
     step(1.0, "done")
-    return dict(kind="classification", name=p["name"], path=path, sample=sample_of(p["name"]),
+    extra = dict(labels=lab, frame_box=box, gray=gray) if keep_labels else {}
+    return dict(extra, kind="classification", name=p["name"], path=path, sample=sample_of(p["name"]),
                 original=np.stack([gray] * 3, -1), analysed=analysed, rows=rows, stats=stats, warnings=warnings,
                 image_info=info, settings=s.as_dict(), version=__version__,
-                model=dict(name=card.get("name", ""), estimator="probability-weighted area" if use_prob else "particle calls",
+                model=dict(name=card.get("name", ""), revision=int(card.get("revision", 0)), estimator="probability-weighted area" if use_prob else "particle calls",
                            sha256=card.get("network", {}).get("sha256", ""), validated=card.get("validated", {}),
                            validation=card.get("validation", {}), borderline=[lo, hi]))
 

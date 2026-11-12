@@ -154,6 +154,8 @@ def _settings_rows(r):
     if r["kind"] == "classification":
         m = r.get("model", {})
         model = s["model_path"] + (f" ({m['name']})" if m.get("name") else "")
+        if m.get("revision"):
+            model += f", classifier revision {m['revision']}"
         if m.get("sha256"):
             model += f", file fingerprint {m['sha256'][:12]}"
         rows += [["Model", model],
