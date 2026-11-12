@@ -39,4 +39,6 @@ QLabel#bigNumber { font-size: 30pt; font-weight: 800; color: #1F2328; }
 QProgressBar { border: 1px solid #D0D7DE; border-radius: 6px; background: #FFFFFF; text-align: center; height: 20px; }
 QProgressBar::chunk { background: #4C8BC2; border-radius: 5px; }
 QScrollArea { background: transparent; }
+QLabel#homeSection { font-size: 13pt; font-weight: 700; color: #1F4E79; padding-top: 6px; }
+QFrame#homeFoot { background: #1F4E79; }
 """

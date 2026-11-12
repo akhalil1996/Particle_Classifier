@@ -2,18 +2,18 @@
 import os
 import sys
 
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QRectF
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
                                QPushButton, QFileDialog, QMessageBox, QScrollArea, QGridLayout)
 
-from cauliquant import __version__, APP_NAME, COPYRIGHT, GROUP, AUTHOR
+from cauliquant import __version__, APP_NAME, COPYRIGHT, GROUP, AUTHOR, SUPERVISION
 from cauliquant.resources import DEFAULT_UNET, resource
 from cauliquant.classifier import load_card
 from .analysis_tab import AnalysisTab
 from .developer_tab import DeveloperTab
 
-ABOUT_TEXT = ("Developed by " + AUTHOR + " at McGill University, " + GROUP + ", for quality control of titanium powder produced by "
+ABOUT_TEXT = ("Developed by " + AUTHOR + ", " + SUPERVISION[0].lower() + SUPERVISION[1:] + ", at McGill University, " + GROUP + ", for quality control of titanium powder produced by "
               "molten salt electrolysis.")
 
 
@@ -71,6 +71,82 @@ class HelpTab(QScrollArea):
             self.lab.adjustSize()
 
 
+class Banner(QWidget):
+    """Photo banner that fills the width and keeps its left edge (where the title is)."""
+
+    def __init__(self, path, height=190):
+        super().__init__()
+        from PySide6.QtGui import QPixmap
+        self.pm = QPixmap(path)
+        self.setFixedHeight(height)
+
+    def paintEvent(self, e):
+        from PySide6.QtGui import QPainter
+        if self.pm.isNull():
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        w, h = self.width(), self.height()
+        s = max(w / self.pm.width(), h / self.pm.height())
+        sw, sh = w / s, h / s
+        p.drawPixmap(self.rect(), self.pm, QRectF(0, (self.pm.height() - sh) / 2, sw, sh).toRect())
+        p.end()
+
+
+def numbered(n, title, body):
+    f = QFrame()
+    f.setObjectName("card")
+    l = QVBoxLayout(f)
+    l.setContentsMargins(14, 12, 14, 12)
+    c = QLabel(str(n))
+    c.setFixedSize(30, 30)
+    c.setAlignment(Qt.AlignCenter)
+    c.setStyleSheet("background:#1F4E79; color:white; border-radius:15px; font-weight:700;")
+    t = QLabel(title)
+    t.setStyleSheet("font-weight:700; font-size:11pt;")
+    b = QLabel(body)
+    b.setWordWrap(True)
+    b.setObjectName("muted")
+    b.setStyleSheet("font-size:9.5pt;")
+    l.addWidget(c)
+    l.addWidget(t)
+    l.addWidget(b)
+    l.addStretch(1)
+    return f
+
+
+def action_card(title, body, buttons):
+    f = QFrame()
+    f.setObjectName("card")
+    l = QVBoxLayout(f)
+    l.setContentsMargins(18, 14, 18, 16)
+    head = QHBoxLayout()
+    bar = QFrame()
+    bar.setFixedSize(7, 22)
+    bar.setStyleSheet("background:#1F4E79; border-radius:3px;")
+    head.addWidget(bar)
+    t = QLabel(title)
+    t.setObjectName("cardTitle")
+    head.addWidget(t)
+    head.addStretch(1)
+    l.addLayout(head)
+    b = QLabel(body)
+    b.setWordWrap(True)
+    b.setStyleSheet("color:#33383F;")
+    l.addWidget(b)
+    l.addStretch(1)
+    row = QHBoxLayout()
+    for i, (text, fn) in enumerate(buttons):
+        btn = QPushButton(text)
+        if i == 0:
+            btn.setObjectName("primary")
+        btn.clicked.connect(fn)
+        row.addWidget(btn)
+    row.addStretch(1)
+    l.addLayout(row)
+    return f
+
+
 class HomeTab(QScrollArea):
     def __init__(self, mw):
         super().__init__()
@@ -79,110 +155,73 @@ class HomeTab(QScrollArea):
         self.setFrameShape(QFrame.NoFrame)
         w = QWidget()
         w.setObjectName("home")
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(36, 28, 36, 28)
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(Banner(resource("assets", "home_banner.jpg")))
+
+        strip = QFrame()
+        strip.setStyleSheet("QFrame#strip { background:#FFFFFF; border-bottom:3px solid #C00000; }")
+        strip.setObjectName("strip")
+        sl = QHBoxLayout(strip)
+        sl.setContentsMargins(40, 12, 40, 10)
+        sl.addWidget(logo_label("mcgill_logo.png", 46))
+        sl.addStretch(1)
+        sl.addWidget(logo_label("p2am2_logo.png", 48))
+        outer.addWidget(strip)
+
+        body = QWidget()
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(40, 22, 40, 26)
         lay.setSpacing(14)
-
-        head = QHBoxLayout()
-        icon = QLabel()
-        ico = resource("assets", "icon.png")
-        if os.path.exists(ico):
-            icon.setPixmap(QIcon(ico).pixmap(72, 72))
-        head.addWidget(icon)
-        tl = QVBoxLayout()
-        name = QLabel(APP_NAME)
-        name.setObjectName("appName")
-        sub = QLabel("SEM quantification of porous cauliflower agglomerates in titanium powder")
-        sub.setObjectName("appSub")
-        ver = QLabel(f"Version {__version__}")
-        ver.setObjectName("muted")
-        tl.addWidget(name)
-        tl.addWidget(sub)
-        tl.addWidget(ver)
-        head.addLayout(tl, 1)
-        logos = QVBoxLayout()
-        logos.setSpacing(6)
-        logos.addWidget(logo_label("mcgill_logo.png", 44), 0, Qt.AlignRight)
-        logos.addWidget(logo_label("p2am2_logo.png", 40), 0, Qt.AlignRight)
-        head.addLayout(logos)
-        lay.addLayout(head)
-
         intro = QLabel(
-            "Titanium powder made by molten salt electrolysis contains two kinds of particle: dense particles, "
-            "which suit powder bed fusion, and porous <i>cauliflower</i> agglomerates built from fine nodules or "
-            "open branches, which flow and pack poorly. CAULIQUANT measures how much of a powder sample is "
-            "cauliflower directly from SEM micrographs, particle by particle, and profiles particle shape on the "
-            "same five classes used for Microtrac dynamic image analysis. It replaces sorting printed SEM images "
-            "by hand with a repeatable count.".replace("CAULIQUANT", APP_NAME))
+            "Titanium powder made by molten salt electrolysis holds dense particles, which suit powder bed fusion, and "
+            "porous <i>cauliflower</i> agglomerates built from fine nodules or open branches, which flow and pack "
+            "poorly. " + APP_NAME + " measures how much of a sample is cauliflower directly from SEM micrographs, "
+            "particle by particle, and profiles particle shape on the five classes used for Microtrac dynamic image "
+            "analysis.")
         intro.setWordWrap(True)
         intro.setObjectName("intro")
         lay.addWidget(intro)
 
-        grid = QGridLayout()
-        grid.setSpacing(12)
-        grid.addWidget(card("Particle classification",
-                            "Segments every particle above 10 µm and gives it a probability of being "
-                            "<b>cauliflower</b>, from a trained U-Net's reading of the surface combined with outline "
-                            "shape and surface relief. Reports the cauliflower share of particle area and volume "
-                            "inside a counting frame. Overlays show every call; borderline particles are drawn in a "
-                            "lighter shade."), 0, 0)
-        grid.addWidget(card("Morphology profiling",
-                            "Measures circularity, solidity, convexity, aspect ratio and extent on each SEM particle "
-                            "outline and assigns it to one of five shape classes, <b>C1 compact</b> to "
-                            "<b>C5 branched / agglomerate</b>, with the k-means model fitted on Microtrac SYNC data. "
-                            "Also reads Microtrac exports: the particle report (PDF or page pictures), the particle "
-                            "table (.xls, .xlsx or .csv) and the laser diffraction size report (PDF or .csv). Open a "
-                            "folder and every sub-folder is read; the report adds figures across all batches."),
-                       0, 1)
-        grid.addWidget(card("Single image or whole folder",
-                            "Open one micrograph, or a folder of fields for batch processing. Fields are grouped "
-                            "into samples by file name (for example <code>384_x100_0031</code> belongs to sample "
-                            "<code>384</code>) and pooled into a per-sample result."), 1, 0)
-        grid.addWidget(card("Reports",
-                            "Export a PDF report with the settings, a per-sample summary and, for every image, "
-                            "the original and analysed views side by side. CSV export gives per-image results or "
-                            "every particle with its measurements."), 1, 1)
-        lay.addLayout(grid)
-
-        how = card("How to use",
-                   "<ol style='margin-left:-20px'>"
-                   "<li>Open the <b>Particle classification</b> or <b>Morphology profiling</b> tab.</li>"
-                   "<li>Click <b>Open image…</b> for one micrograph or <b>Open folder…</b> for a batch. "
-                   "The analysis starts by itself.</li>"
-                   "<li>Use <b>Original / Analysed</b> above the image (or the space bar) to compare. "
-                   "Scroll to zoom, drag to pan.</li>"
-                   "<li>Read the results on the right; in batch mode, click an image in the list to see it.</li>"
-                   "<li>Click <b>Export PDF report</b> to save the report.</li></ol>")
-        req = card("Images",
-                   "Secondary-electron SEM images at <b>x100</b>, ideally 2560 × 1920 px "
-                   "(about 0.5 µm per pixel), with particles spread as a monolayer. The pixel size is read from "
-                   "the Hitachi SU3500 metadata (the .txt file saved next to each image, or the TIFF header). "
-                   "For other images, untick <i>Pixel size from SEM metadata</i> and enter it. Images at another "
-                   "pixel size are resampled to 0.5 µm/px before analysis. The data bar at the bottom is detected "
-                   "and left out. Accepted formats: TIFF, PNG, JPEG, BMP. The morphology tab also takes Microtrac "
-                   "PDF reports, pictures of report pages, particle tables (.xls, .xlsx, .csv) and size exports (.csv), "
-                   "and whole folder trees of them.")
+        sec = QLabel("Start an analysis")
+        sec.setObjectName("homeSection")
+        lay.addWidget(sec)
         row = QHBoxLayout()
-        row.setSpacing(12)
-        row.addWidget(how, 1)
-        row.addWidget(req, 1)
+        row.setSpacing(14)
+        row.addWidget(action_card(
+            "Particle classification",
+            "Every particle above 10 µm gets a probability of being cauliflower, from a trained network's reading of "
+            "the surface together with outline shape and relief. The result is the cauliflower share of particle "
+            "area, per image and pooled per sample.",
+            [("Open image…", lambda: mw._go(mw.tab_class).open_image()),
+             ("Open folder…", lambda: mw._go(mw.tab_class).open_folder())]), 1)
+        row.addWidget(action_card(
+            "Morphology profiling",
+            "Shape classes C1 compact to C5 branched, from SEM micrographs or Microtrac files: particle reports, "
+            "particle tables and laser diffraction size reports. Open a folder tree of batches to get a table and "
+            "figures across all of them.",
+            [("Open files…", lambda: mw._go(mw.tab_morph).open_image()),
+             ("Open folder…", lambda: mw._go(mw.tab_morph).open_folder())]), 1)
         lay.addLayout(row)
 
-        trust = card("How far to trust a result",
-                     "<b>One image is a rough number.</b> Fields of the same stub differ by about 10 points, so a "
-                     "sample needs several fields. In batch mode each sample gets a 95 % interval over its fields "
-                     "and an estimate of how many fields a ±5 point interval would take."
-                     "<br><b>Some particles are borderline.</b> About a third of particles sit between the two "
-                     "classes. They are drawn in a lighter shade and their share of the area is reported, so you can "
-                     "see how much of a result rests on them."
-                     "<br><b>Warnings matter.</b> An image is flagged when its SEM settings differ from the ones the "
-                     "model was validated on, when the field is crowded, soft or saturated, or when it holds few "
-                     "particles. The model's measured error on batches it never saw is printed in every report.")
-        lay.addWidget(trust)
+        sec = QLabel("Getting started")
+        sec.setObjectName("homeSection")
+        lay.addWidget(sec)
+        steps = QHBoxLayout()
+        steps.setSpacing(12)
+        for i, (t, b) in enumerate((
+                ("Open files", "One micrograph, or a folder for a batch. The analysis starts by itself."),
+                ("Check the overlay", "Space bar switches original and analysed. Scroll to zoom, drag to pan."),
+                ("Read the result", "Results on the right; in a batch, click an image in the list to see it."),
+                ("Export", "PDF report, figures as PNG, or CSV of every image or every particle.")), 1):
+            steps.addWidget(numbered(i, t, b), 1)
+        lay.addLayout(steps)
 
         mf = QFrame()
         mf.setObjectName("card")
         ml = QHBoxLayout(mf)
+        ml.setContentsMargins(18, 12, 18, 12)
         self.model_label = QLabel()
         self.model_label.setWordWrap(True)
         ml.addWidget(self.model_label, 1)
@@ -190,15 +229,33 @@ class HomeTab(QScrollArea):
         b1.clicked.connect(mw.choose_model)
         b2 = QPushButton("Use built-in model")
         b2.clicked.connect(mw.reset_model)
-        ml.addWidget(b1)
-        ml.addWidget(b2)
+        b3 = QPushButton("Help (F1)")
+        b3.clicked.connect(lambda: mw._go(mw.tab_help))
+        for b in (b1, b2, b3):
+            ml.addWidget(b)
         lay.addWidget(mf)
-
-        about = QLabel(f"{ABOUT_TEXT}<br><b>{COPYRIGHT}</b><br>{APP_NAME} {__version__} · Python {sys.version.split()[0]}")
-        about.setObjectName("muted")
-        about.setWordWrap(True)
-        lay.addWidget(about)
         lay.addStretch(1)
+        outer.addWidget(body, 1)
+
+        foot = QFrame()
+        foot.setObjectName("homeFoot")
+        fl = QHBoxLayout(foot)
+        fl.setContentsMargins(40, 18, 40, 18)
+        left = QVBoxLayout()
+        left.setSpacing(2)
+        for text, style in (("DEVELOPED BY", "font-size:8.5pt; letter-spacing:1px; color:#BFD0E2;"),
+                            (AUTHOR, "font-size:17pt; font-weight:700; color:white;"),
+                            (SUPERVISION, "font-size:10.5pt; color:white;"),
+                            (GROUP + " · McGill University, Montréal", "font-size:9.5pt; color:#DCE6F0;")):
+            q = QLabel(text)
+            q.setStyleSheet(style)
+            left.addWidget(q)
+        fl.addLayout(left, 1)
+        right = QLabel(f"{COPYRIGHT}<br>{APP_NAME} {__version__} · Python {sys.version.split()[0]}")
+        right.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+        right.setStyleSheet("color:#DCE6F0; font-size:9pt;")
+        fl.addWidget(right)
+        outer.addWidget(foot)
         self.setWidget(w)
         self.update_model()
 
