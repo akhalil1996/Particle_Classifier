@@ -7,13 +7,13 @@ from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
                                QPushButton, QFileDialog, QMessageBox, QScrollArea, QGridLayout)
 
-from cauliquant import __version__, APP_NAME, COPYRIGHT, GROUP
+from cauliquant import __version__, APP_NAME, COPYRIGHT, GROUP, AUTHOR
 from cauliquant.resources import DEFAULT_UNET, resource
 from cauliquant.classifier import load_card
 from .analysis_tab import AnalysisTab
 from .developer_tab import DeveloperTab
 
-ABOUT_TEXT = ("Developed at McGill University, " + GROUP + ", for quality control of titanium powder produced by "
+ABOUT_TEXT = ("Developed by " + AUTHOR + " at McGill University, " + GROUP + ", for quality control of titanium powder produced by "
               "molten salt electrolysis.")
 
 
@@ -42,6 +42,33 @@ def card(title, body, accent="#1F4E79"):
     l.addWidget(b)
     l.addStretch(1)
     return f
+
+
+class HelpTab(QScrollArea):
+    """The user guide, one picture scaled to the width of the window."""
+
+    def __init__(self):
+        super().__init__()
+        from PySide6.QtGui import QPixmap
+        self.setWidgetResizable(False)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setAlignment(Qt.AlignHCenter)
+        self.setStyleSheet("QScrollArea { background: #F6F8FA; }")
+        self.pm = QPixmap(resource("assets", "help.png"))
+        self.lab = QLabel()
+        self.lab.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self.setWidget(self.lab)
+        self._w = 0
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self.pm.isNull():
+            return
+        w = min(self.viewport().width() - 4, self.pm.width())
+        if w > 0 and w != self._w:
+            self._w = w
+            self.lab.setPixmap(self.pm.scaledToWidth(w, Qt.SmoothTransformation))
+            self.lab.adjustSize()
 
 
 class HomeTab(QScrollArea):
@@ -211,6 +238,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.home, "Home")
         self.tabs.addTab(self.tab_class, "Particle classification")
         self.tabs.addTab(self.tab_morph, "Morphology profiling")
+        self.tab_help = HelpTab()
+        self.tabs.addTab(self.tab_help, "Help")
         self.tab_dev = DeveloperTab(self)
         self.tabs.addTab(self.tab_dev, "Developer")
         self.tabs.currentChanged.connect(lambda i: self.home.update_model() if self.tabs.widget(i) is self.home else None)
@@ -235,6 +264,10 @@ class MainWindow(QMainWindow):
         a.triggered.connect(self.close)
         m.addAction(a)
         h = self.menuBar().addMenu("&Help")
+        a = QAction("User guide", self)
+        a.setShortcut("F1")
+        a.triggered.connect(lambda: self._go(self.tab_help))
+        h.addAction(a)
         a = QAction(f"About {APP_NAME}", self)
         a.triggered.connect(self.about)
         h.addAction(a)

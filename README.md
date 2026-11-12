@@ -1,6 +1,6 @@
 # CauliQuant
 
-© 2026 McGill University. All rights reserved. Developed at McGill University by the Powder Processing and Additive Manufacturing of Advanced Materials group (P²[AM]²).
+© 2026 McGill University. All rights reserved. Developed by Abdelrahman Khalil, Powder Processing and Additive Manufacturing of Advanced Materials (P²[AM]²), McGill University.
 
 Desktop software that measures porous **cauliflower** agglomerates and particle shape in titanium powder from SEM micrographs.
 
